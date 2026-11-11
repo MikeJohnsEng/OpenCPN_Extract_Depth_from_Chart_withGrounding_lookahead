@@ -1,0 +1,8 @@
+build/
+windows/dist/
+linux/dist/
+*.o
+*.obj
+*.so
+*.dll
+*.tar.gz
