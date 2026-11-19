@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Mike
+# SPDX-License-Identifier: GPL-2.0-or-later
+# GNU General Public License version 2 or later; see the file LICENSE.
 # ---------------------------------------------------------------------------
 # cm93depth_pi - build on Windows, matched to the installed OpenCPN (32- or
 # 64-bit, wxWidgets 3.2 or 3.3), and package it as a plugin tarball that

@@ -5,7 +5,7 @@ Two separate jobs:
 
   BUILD    once per OpenCPN type, on a PC with Visual Studio.
            Result: a plugin tarball, e.g.
-             windows\dist\cm93depth_pi-1.5.1-0_msvc-wx32-10-x86.tar.gz
+             windows\dist\cm93depth_pi-1.5.2-0_msvc-wx32-10-x86.tar.gz
   INSTALL  on any PC with that OpenCPN type, from inside OpenCPN:
              Options > Plugins > Import plugin...
            No compiler, script or admin rights needed.

@@ -5,6 +5,9 @@
  * a radius) and sends it as a proprietary NMEA 0183 sentence on a serial
  * port or an OpenCPN output connection.
  *
+ * Copyright (C) 2026 Mike
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -30,7 +33,7 @@
 
 #define PLUGIN_VERSION_MAJOR 1
 #define PLUGIN_VERSION_MINOR 5
-#define PLUGIN_VERSION_PATCH 1
+#define PLUGIN_VERSION_PATCH 2
 
 class DepthPanel;
 class AlarmDialog;

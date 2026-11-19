@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 Mike
+# SPDX-License-Identifier: GPL-2.0-or-later
+# GNU General Public License version 2 or later; see the file LICENSE.
 # ---------------------------------------------------------------------------
 # cm93depth_pi - build on Linux (Debian, Ubuntu, Raspberry Pi OS, Mint ...)
 # for the OpenCPN installed from the distribution or the OpenCPN PPA, and

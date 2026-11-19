@@ -1,3 +1,12 @@
+// cm93depth_pi - test_serial.cpp
+// Copyright (C) 2026 Mike
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version. See the file LICENSE.
+//
 // POSIX-only check of SerialPort against a pseudo-terminal pair: open at
 // 4800 baud, write a sentence, read it back from the master side.
 #include <fcntl.h>

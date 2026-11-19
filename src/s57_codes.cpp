@@ -1,3 +1,12 @@
+// cm93depth_pi - s57_codes.cpp
+// Copyright (C) 2026 Mike
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version. See the file LICENSE.
+//
 // Generated from OpenCPN data/s57data/s57objectclasses.csv and s57attributes.csv
 // (IHO S-57 object and attribute catalogues). Do not edit by hand.
 #include "s57_reader.h"

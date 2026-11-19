@@ -1,3 +1,12 @@
+// cm93depth_pi - s57_writer.h
+// Copyright (C) 2026 Mike
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version. See the file LICENSE.
+//
 // Minimal S-57 / ISO 8211 writer for the unit tests: builds base cells and
 // update files the way producers lay them out (DDR + one data record per
 // vector or feature record), so they can be read back through the plugin's

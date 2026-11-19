@@ -3,6 +3,9 @@
  *
  * depth_engine.cpp
  *
+ * Copyright (C) 2026 Mike
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -1010,11 +1013,29 @@ bool DepthEngine::gapAt(double lat, double lon, int slot, const EngineConfig &cf
     // the charts there and round it, so a gap near a chart edge is enclosed too
     std::vector<std::shared_ptr<CellData>> home = cellsAt(lat, lon, slot, cfg);
     if (home.empty()) return false;
-    if (kSlots[slot].enc > 0) {
-      // An ENC's extent is a rectangle round its coverage: outside the
-      // coverage is not a gap
+    // Outside the chart's coverage (M_COVR) is not a gap: the chart simply
+    // has no data there. A CM93 cell often covers only part of its square
+    // (a strip of coast, a group of islands), and its depth areas can then
+    // lie all round a position in open water it does not chart. An ENC's
+    // extent is likewise only a rectangle round its coverage. A chart with
+    // no coverage object at all is taken to cover its whole cell.
+    {
       bool covered = false;
-      for (auto &c : home) covered = covered || cellCovers(*c, lat, lon);
+      for (auto &c : home) {
+        bool haveCovr = false, in = false;
+        for (const Feature &f : c->features) {
+          if (f.cls != "M_COVR" || f.geom != Geom::Area) continue;
+          haveCovr = true;
+          double catcov = 1;
+          f.getNum("CATCOV", catcov);
+          if (catcov == 2) continue;  // "no coverage available"
+          if (bbox_may_contain(f, lat, lon) && geo::point_in_rings(f.parts, lat, lon)) {
+            in = true;
+            break;
+          }
+        }
+        if (!haveCovr || in) covered = true;
+      }
       if (!covered) return false;
     }
     std::vector<std::shared_ptr<CellData>> cells = cellsAround(lat, lon, slot, cfg);

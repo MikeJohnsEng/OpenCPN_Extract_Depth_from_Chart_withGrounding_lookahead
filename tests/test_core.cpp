@@ -1,3 +1,12 @@
+// cm93depth_pi - test_core.cpp
+// Copyright (C) 2026 Mike
+// SPDX-License-Identifier: GPL-2.0-or-later
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version. See the file LICENSE.
+//
 // Unit tests for the wx-free core: CM93 reader, depth engine, NMEA output.
 //
 // A synthetic CM93 tree is written to a temp directory using the inverse of
@@ -1713,6 +1722,51 @@ int main() {
       ic3.coarseClearDepthM = 12.0;
       r3 = e3.compute(vla, vlo, ic3);
       CHECK(r3.dangerHere && std::fabs(r3.leastDepth) < 1e-9);
+    }
+    {  // a detailed cell covering only part of its square (Bass Strait,
+       // north of Tasmania): its depth areas lie all round a position in
+       // open water outside its coverage. That is not a gap; the smaller
+       // scale cell that does chart the position gives the depth.
+      for (int full = 0; full <= 1; full++) {
+        const double pla = -39.10, plo = full ? 140.10 : 141.10;  // the vessel
+        int cg = cell_index(pla, plo, G), ce = cell_index(pla, plo, E);
+        double gla, glo, ela, elo;
+        cell_origin(cg, gla, glo);
+        cell_origin(ce, ela, elo);
+        Writer wg(gla, glo, sz);
+        if (full) wg.addRectArea(C_MSOR, gla, glo, gla + sz, glo + sz, {});
+        else wg.addRectArea(C_MSOR, gla, glo, gla + 0.02, glo + 0.02, {});  // a corner only
+        const double d = 0.03, h = 0.008;  // islands of 30-50 m round the vessel
+        for (auto off : std::vector<std::pair<double, double>>{{d, 0}, {-d, 0}, {0, d}, {0, -d}})
+          wg.addRectArea(C_DEPARE, pla + off.first - h, plo + off.second - h,
+                         pla + off.first + h, plo + off.second + h,
+                         {Writer::attrR(A_DRVAL1, 30.0f), Writer::attrW(A_DRVAL2, 50.0)});
+        write_cell(root, cg, G, '0', wg);
+        Writer we(ela, elo, cell_size_deg(E));
+        we.addRectArea(C_MSOR, ela, elo, ela + cell_size_deg(E), elo + cell_size_deg(E), {});
+        we.addRectArea(C_DEPARE, ela, elo, ela + cell_size_deg(E), elo + cell_size_deg(E),
+                       {Writer::attrR(A_DRVAL1, 50.0f), Writer::attrW(A_DRVAL2, 100.0)});
+        we.addSoundings(C_SOUNDG, {{{pla + 0.05, plo + 0.02, 77.0}}, {{pla - 0.04, plo - 0.05, 80.0}}});
+        write_cell(root, ce, E, '0', we);
+        DepthEngine e4;
+        e4.setRoot(root.u8string());
+        EngineConfig i4;
+        i4.mode = SearchMode::Interpolated;
+        i4.radiusNm = 50;
+        DepthResult r4 = e4.compute(pla, plo, i4);
+        if (full) {  // the cell does cover it: a real gap in its depth areas
+          CHECK(r4.leastClass == "HOLE" && std::fabs(r4.leastDepth) < 1e-9);
+        } else {
+          CHECK(r4.valid && r4.leastClass == "INTERP" && r4.leastDepth >= 50.0 && !r4.dangerHere);
+          std::cout << "outside a partial cell's coverage: " << r4.leastDepth << " m, "
+                    << r4.scaleTrace << "\n";
+          LookAheadConfig l4;
+          l4.basis = LookBasis::Distance;
+          l4.distanceNm = 1.0;
+          LookAheadResult a4 = e4.lookAhead(pla, plo, 0.0, 6.0, NAN, l4, i4);
+          CHECK(a4.valid && !a4.haveUndepthed);
+        }
+      }
     }
     // look-ahead toward the gap from the west, along 090: the gap's west
     // edge is 1 q of longitude ahead

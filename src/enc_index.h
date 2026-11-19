@@ -8,6 +8,9 @@
  * its timer without holding up OpenCPN, and the result is kept in a cache
  * file so later starts only re-read cells that have changed.
  *
+ * Copyright (C) 2026 Mike
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
