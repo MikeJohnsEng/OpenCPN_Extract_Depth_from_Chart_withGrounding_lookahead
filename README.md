@@ -19,6 +19,7 @@ An OpenCPN plugin that reads the vector chart under the vessel (a CM93 cell, or 
 - **Land:** a position on charted land gives no depth in any mode (status V, "LAND" in the window). In interpolated mode, soundings with charted land between them and the vessel (the far side of a headland, behind an island) are left out, each checked against the coastline of its own scale band; this can be switched off.
 - **Objects counted** (each can be switched off): soundings (`SOUNDG`), depth and dredged areas (`DEPARE`, CM93 `ITDARE`, `DRGARE`), depth contours (`DEPCNT`), and rocks/wrecks/obstructions with a charted depth (`UWTROC`, `WRECKS`, `OBSTRN`). Dangers with *no* charted depth are counted and reported separately.
 - **Look-ahead:** a zone ahead of the vessel (a corridor along the course, or a sector centred on it), as long as SOG × a set time or a fixed distance. Reports the least charted depth in it and the **first shoal**: the nearest point ahead shallower than a safety depth, land, or a rock/wreck/obstruction with no charted depth. Sent as a second sentence, `$PCMLA`, and drawn on the chart (dashed green when clear, red with a ring on the first shoal).
+- **Route check:** checks a planned route against the charts before it is followed. Every leg is searched as a corridor (default ±0.1 nm, your allowed cross-track error) and a circle round every waypoint (default 0.2 nm), for charted depths that plus an optional height of tide are below the safety depth, land, rocks/wrecks/obstructions with no charted depth, gaps in the depth areas, stretches with no chart, and stretches only small-scale charts cover ("poorly charted", a warning). Each leg and waypoint gets PASS, WARNING or FAIL; the window lists the findings (double-click to go to one), the route is drawn on the chart in green / amber / red with a ring on every finding while the window is open (closing it, **Clear from chart**, or **Clear route check from chart** in the right-click menu returns the route to its normal display; an option keeps it drawn), and Copy report gives the full list. Open it from the chart's right-click menu (**Check route depths...**) or the display window. A route is also checked **automatically when it is activated** (and again if its waypoints are changed while active); if it fails, the alarm sounds once and the findings open, and the display window shows "ACTIVE ROUTE FAILS THE DEPTH CHECK".
 - **Grounding alarm** on the OpenCPN PC: when the look-ahead's first shoal is within 6 minutes (at SOG) or 0.2 nm, or the depth at the vessel is below the safety depth, or the vessel is on charted land. It sounds (OpenCPN's beep, or a WAV you choose) every 5 s and opens an always-on-top window, flashing red. **Silence** mutes it for 30 s; **Acknowledge** stops the sound while the condition lasts (window turns amber). It sounds again if it gets worse (time to the shoal halves, or the depth here drops below the safety depth), and clears by itself when the condition clears. Optionally sent as `$IIALR` (IEC 61162-1) on the NMEA output. The watch officer can switch it off completely (**Alarm: on/OFF** button in the depth window, or **Switch alarm off…** in the alarm window, both ask first), e.g. for navigable water shallower than the safety depth; the depth window then shows "GROUNDING ALARM OFF" in amber. It is on again whenever OpenCPN starts, and optionally after a set time. Settings on the Alarm tab.
 - **Chart selection:** auto (most detailed chart, CM93 or ENC, whose coverage contains the vessel) or a fixed CM93 scale band (ENC cells then unused).
 - **Output:** the plugin's own serial port (port and baud configurable), or any existing OpenCPN NMEA 0183 output connection.
@@ -27,7 +28,7 @@ Depths are charted values below chart datum. No tide is applied.
 
 ## Getting the source
 
-Clone or download this repository (GitHub: Code > Download ZIP). The build scripts work from wherever the folder is; where this README or the guides say `~/cm93depth_pi`, use the folder you cloned or unzipped to. The manual and the Linux / Raspberry Pi build guide are in `doc/` (LibreOffice `.odt`, with PDF copies).
+Clone or download this repository (GitHub: Code > Download ZIP). The build scripts work from wherever the folder is; where this README or the guides say `~/cm93depth_pi`, use the folder you cloned or unzipped to. The manual and the Linux / Raspberry Pi build guide are in `doc/` (LibreOffice `.odt`).
 
 ## Sentence
 
@@ -166,6 +167,7 @@ src/s57_reader.*     ISO 8211 + S-57 ENC reader with updates (no wx/OpenCPN depe
 src/s57_codes.cpp    S-57 object and attribute catalogue (from OpenCPN's s57data)
 src/enc_index.*      finds and indexes ENC cells in the chart folders, with a cache
 src/depth_engine.*   chart band selection (CM93 + ENC), coverage test, least-depth search
+src/route_check.*    route check: legs as corridors, waypoint circles, findings, report
 src/lookahead.cpp    look-ahead zone, slicing by scale, exact clipping
 src/nmea_out.*       $PCMLD, $PCMLA and $IIALR sentences and checksum
 src/alarm_logic.h    grounding alarm states (active / silenced / acknowledged)
@@ -174,6 +176,7 @@ src/serial_port.*    write-only serial port, POSIX + Win32
 src/cm93depth_pi.*   plugin glue, settings, timer, chart mark, output
 src/depth_panel.*    display window
 src/prefs_dialog.*   preferences
+src/route_dialog.*   route check window
 src/icons.*          toolbar icon drawn in code
 linux/               build_linux.sh: build + plugin tarball (Linux, Raspberry Pi)
 windows/             build_windows.bat/.ps1: build + plugin tarball (Windows)

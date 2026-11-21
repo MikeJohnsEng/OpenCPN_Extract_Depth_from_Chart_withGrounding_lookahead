@@ -306,6 +306,66 @@ static const bool DEF_ALARM_SEND_ALR = false;
 // 0 (default) = stays off until switched on. Range 0 .. 720.
 static const int DEF_ALARM_OFF_REARM_MIN = 0;
 
+// --- Route check -----------------------------------------------------------
+//
+// Checks a planned route against the charts before it is followed: each leg
+// as a corridor, and a circle round each waypoint, for charted depths
+// shallower than the safety depth (the look-ahead's, above) plus the
+// height of tide entered, land, dangers with no charted depth, gaps in the
+// depth areas, and stretches only small-scale charts cover. Opened from
+// the chart's right-click menu ("Check route depths...") or the display
+// window; runs by itself when a route is activated. All of these can also
+// be changed in the route check window and are remembered.
+
+// Corridor half-width each side of every leg, nm. Default 0.1 (185 m): the
+// cross-track error you allow. Raising it finds more beside the track (and
+// more false alarms in narrow channels); lowering it checks only close to
+// the line. Range 0.01 .. 5.
+static const double DEF_RC_HALF_WIDTH_NM = 0.1;
+
+// Radius of the circle checked round every waypoint, nm. Default 0.2. The
+// boat turns inside the corner and may overshoot it; raise it for a large
+// turning circle or a sloppy arrival, lower it for tight pilotage. 0 = only
+// the legs. Range 0 .. 5.
+static const double DEF_RC_WAYPOINT_RADIUS_NM = 0.2;
+
+// Height of tide added to charted depths for the check, m. Default 0
+// (charted depths, below chart datum: the most cautious). Enter the
+// predicted height of tide for the passage time only if you plan to rely
+// on it. Range -5 .. 15.
+static const double DEF_RC_TIDE_M = 0.0;
+
+// Least detailed chart band still taken as properly charted. A leg that in
+// places relies on a less detailed band gets a WARNING ("poorly charted"),
+// not a failure. Default 'C' (CM93 1:200,000; ENC coastal and better pass).
+// Order, least detailed first: Z A 1 B 2 C 3 D E 4 F 5 G 6.
+static const char DEF_RC_POOR_BAND = 'C';
+
+// Rocks, wrecks and obstructions with no charted depth, and gaps in the
+// depth areas, inside the corridor or a waypoint circle FAIL the route.
+// Default true. false = they only give a warning.
+static const bool DEF_RC_UNDEPTHED_FAILS = true;
+
+// Draw the checked route on the chart: legs green (pass), amber (warning),
+// red (fail), with a ring on every finding. Default true.
+static const bool DEF_RC_SHOW_ON_CHART = true;
+
+// Keep that drawing when the route check window is closed. Default false:
+// closing the window clears it and the route is drawn normally again.
+// true = it stays until "Clear from chart" in the window, "Clear route
+// check from chart" in the chart's right-click menu, or the route is
+// deleted or changed.
+static const bool DEF_RC_KEEP_ON_CLOSE = false;
+
+// Check a route automatically when it is activated in OpenCPN (and again
+// when its waypoints are changed while it is active). Default true.
+static const bool DEF_RC_ON_ACTIVATE = true;
+
+// If that automatic check FAILS: sound the alarm once and open the route
+// check window with the findings. Default true. (The display window also
+// shows the active route's result.)
+static const bool DEF_RC_ALARM_ON_FAIL = true;
+
 // --- Display ---------------------------------------------------------------
 
 // Put a temporary (not saved) mark on the chart at the least-depth spot.
@@ -347,6 +407,7 @@ static const bool DEF_PANEL_COMPACT = true;
 #include "icons.h"
 #include "nmea_out.h"
 #include "prefs_dialog.h"
+#include "route_dialog.h"
 
 static const int kChartRetryMs = 30000;  // re-search for charts if missing
 static const int kSerialRetryMs = 5000;  // re-open a failed serial port
@@ -419,6 +480,16 @@ cm93depth_pi::cm93depth_pi(void *ppimgr)
   m_s.markIcon = DEF_MARK_ICON;
   m_s.panelVisible = true;
   m_s.panelCompact = DEF_PANEL_COMPACT;
+  m_s.rcHalfWidthNm = DEF_RC_HALF_WIDTH_NM;
+  m_s.rcWaypointRadiusNm = DEF_RC_WAYPOINT_RADIUS_NM;
+  m_s.rcTideM = DEF_RC_TIDE_M;
+  m_s.rcPoorBand = DEF_RC_POOR_BAND;
+  m_s.rcUndepthedFails = DEF_RC_UNDEPTHED_FAILS;
+  m_s.rcShowOnChart = DEF_RC_SHOW_ON_CHART;
+  m_s.rcKeepOnClose = DEF_RC_KEEP_ON_CLOSE;
+  m_s.rcOnActivate = DEF_RC_ON_ACTIVATE;
+  m_s.rcAlarmOnFail = DEF_RC_ALARM_ON_FAIL;
+  m_rcTimer.SetOwner(this);
   m_s.panelPos = wxDefaultPosition;
 }
 
@@ -438,11 +509,21 @@ int cm93depth_pi::Init() {
   Bind(wxEVT_TIMER, &cm93depth_pi::OnTimer, this, m_timer.GetId());
   m_timer.Start(std::clamp(m_s.intervalMs, 200, 10000));
 
+  Bind(wxEVT_TIMER, &cm93depth_pi::OnRouteTimer, this, m_rcTimer.GetId());
+  {
+    wxMenu dummy;  // OpenCPN keeps its own copy of the item
+    wxMenuItem *mi = new wxMenuItem(&dummy, wxID_ANY, _("Check route depths..."));
+    m_ctxMenuId = AddCanvasContextMenuItem(mi, this);
+    wxMenuItem *mc = new wxMenuItem(&dummy, wxID_ANY, _("Clear route check from chart"));
+    m_ctxClearId = AddCanvasContextMenuItem(mc, this);
+    SetCanvasContextMenuItemViz(m_ctxClearId, false);  // shown only while drawn
+  }
+
   if (m_s.panelVisible) togglePanel(true);
 
   return (WANTS_TOOLBAR_CALLBACK | INSTALLS_TOOLBAR_TOOL | WANTS_CONFIG |
           WANTS_NMEA_EVENTS | WANTS_PREFERENCES | WANTS_OVERLAY_CALLBACK |
-          WANTS_OPENGL_OVERLAY_CALLBACK);
+          WANTS_OPENGL_OVERLAY_CALLBACK | INSTALLS_CONTEXTMENU_ITEMS);
 }
 
 bool cm93depth_pi::DeInit() {
@@ -453,6 +534,23 @@ bool cm93depth_pi::DeInit() {
   // time, when Destroy() is used) would run code that no longer exists.
   m_timer.Stop();
   Unbind(wxEVT_TIMER, &cm93depth_pi::OnTimer, this, m_timer.GetId());
+  m_rcTimer.Stop();
+  Unbind(wxEVT_TIMER, &cm93depth_pi::OnRouteTimer, this, m_rcTimer.GetId());
+  m_rcChecker.cancel();
+  if (m_rcDlg) {
+    RouteCheckDialog *d = m_rcDlg;
+    m_rcDlg = nullptr;
+    d->Hide();
+    delete d;  // now, not at idle time (see below)
+  }
+  if (m_ctxMenuId >= 0) {
+    RemoveCanvasContextMenuItem(m_ctxMenuId);
+    m_ctxMenuId = -1;
+  }
+  if (m_ctxClearId >= 0) {
+    RemoveCanvasContextMenuItem(m_ctxClearId);
+    m_ctxClearId = -1;
+  }
   removeMarker();
   closeAlarmWindow();
   if (m_panel) {
@@ -500,6 +598,9 @@ wxString cm93depth_pi::GetLongDescription() {
       "Looks ahead along the course over a set time or distance and reports "
       "the least depth there and the first point shallower than a safety "
       "depth, as the sentence $PCMLA, and draws the zone on the chart.\n\n"
+      "Checks a planned route leg by leg against the charts before it is "
+      "followed (right-click the chart: Check route depths...), and "
+      "automatically when a route is activated.\n\n"
       "Depths are charted values below chart datum. No tide is applied. Not "
       "for use as the sole means of navigation.");
 }
@@ -848,6 +949,7 @@ void cm93depth_pi::update() {
     m_lastLookSentence.clear();
   }
   updateAlarm();
+  pollActiveRoute();
 
   // the zone moves with every fix; redraw while it is shown (or to clear it)
   if (overlayWanted() || m_overlayDrawn) RequestRefresh(m_parentWindow);
@@ -973,7 +1075,8 @@ void cm93depth_pi::closeAlarmWindow() {
 // Look-ahead zone on the chart
 // ---------------------------------------------------------------------------
 bool cm93depth_pi::overlayWanted() const {
-  return m_s.laEnabled && m_s.laShowZone && m_look.valid && m_look.outline.size() >= 3;
+  return (m_s.laEnabled && m_s.laShowZone && m_look.valid && m_look.outline.size() >= 3) ||
+         routeOverlayWanted();
 }
 
 void cm93depth_pi::overlayColours(wxColour &zone, wxColour &shoal) const {
@@ -988,8 +1091,12 @@ void cm93depth_pi::overlayColours(wxColour &zone, wxColour &shoal) const {
 bool cm93depth_pi::RenderOverlayMultiCanvas(wxDC &dc, PlugIn_ViewPort *vp,
                                             int /*canvasIndex*/, int priority) {
   if (priority != OVERLAY_LEGACY && priority != -1) return false;
+  if (vp) m_lastViewScalePpm = vp->view_scale_ppm;
   m_overlayDrawn = overlayWanted();
   if (!m_overlayDrawn) return false;
+  if (routeOverlayWanted()) drawRouteDC(dc, vp);
+  if (!(m_s.laEnabled && m_s.laShowZone && m_look.valid && m_look.outline.size() >= 3))
+    return true;
   wxColour zc, sc;
   overlayColours(zc, sc);
   std::vector<wxPoint> pts;
@@ -1018,8 +1125,12 @@ bool cm93depth_pi::RenderGLOverlayMultiCanvas(wxGLContext * /*ctx*/, PlugIn_View
   return false;
 #else
   if (priority != OVERLAY_LEGACY && priority != -1) return false;
+  if (vp) m_lastViewScalePpm = vp->view_scale_ppm;
   m_overlayDrawn = overlayWanted();
   if (!m_overlayDrawn) return false;
+  if (routeOverlayWanted()) drawRouteGL(vp);
+  if (!(m_s.laEnabled && m_s.laShowZone && m_look.valid && m_look.outline.size() >= 3))
+    return true;
   wxColour zc, sc;
   overlayColours(zc, sc);
   glPushAttrib(GL_LINE_BIT | GL_ENABLE_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT |
@@ -1054,6 +1165,306 @@ bool cm93depth_pi::RenderGLOverlayMultiCanvas(wxGLContext * /*ctx*/, PlugIn_View
   }
   glPopAttrib();
   return true;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Route check
+// ---------------------------------------------------------------------------
+cm93::RouteCheckConfig cm93depth_pi::routeCheckConfig() const {
+  cm93::RouteCheckConfig c;
+  c.halfWidthNm = m_s.rcHalfWidthNm;
+  c.waypointRadiusNm = m_s.rcWaypointRadiusNm;
+  c.tideM = m_s.rcTideM;
+  c.safetyDepthM = m_s.laSafetyDepthM;
+  c.undepthedFails = m_s.rcUndepthedFails;
+  int ps = cm93::slot_from_char(m_s.rcPoorBand);
+  c.poorBandSlot = ps >= 0 ? ps : cm93::slot_from_char('C');
+  return c;
+}
+
+bool cm93depth_pi::readRoute(const wxString &guid, std::vector<cm93::RouteWaypoint> &pts,
+                             wxString &name, uint64_t &signature) const {
+  pts.clear();
+  signature = 1469598103934665603ULL;  // FNV-1a over the positions
+  if (guid.IsEmpty()) return false;
+  std::unique_ptr<PlugIn_Route_Ex> r = GetRouteEx_Plugin(guid);
+  if (!r || !r->pWaypointList) return false;
+  name = r->m_NameString;
+  auto mix = [&](double v) {
+    const unsigned char *b = reinterpret_cast<const unsigned char *>(&v);
+    for (size_t k = 0; k < sizeof v; k++) signature = (signature ^ b[k]) * 1099511628211ULL;
+  };
+  for (auto node = r->pWaypointList->GetFirst(); node; node = node->GetNext()) {
+    PlugIn_Waypoint_Ex *w = node->GetData();
+    if (!w) continue;
+    cm93::RouteWaypoint p;
+    p.lat = w->m_lat;
+    p.lon = w->m_lon;
+    p.name = w->m_MarkName.ToStdString(wxConvUTF8);
+    pts.push_back(p);
+    mix(p.lat);
+    mix(p.lon);
+  }
+  return pts.size() >= 2;
+}
+
+void cm93depth_pi::startRouteCheck(const wxString &guid, bool automatic) {
+  std::vector<cm93::RouteWaypoint> pts;
+  wxString name;
+  uint64_t sig = 0;
+  if (!readRoute(guid, pts, name, sig)) {
+    if (m_rcDlg) m_rcDlg->showMessage(_("That route has fewer than two waypoints, or no "
+                                        "longer exists."));
+    return;
+  }
+  if (!m_engine.ready()) {
+    if (m_rcDlg) m_rcDlg->showMessage(_("No charts: the route cannot be checked."));
+    return;
+  }
+  m_rcChecker.start(pts, std::string(name.ToUTF8()), routeCheckConfig(), engineConfig());
+  m_rcAuto = automatic;
+  m_rcRunningGuid = guid;
+  m_rcRunningSig = sig;
+  m_rcTimer.Start(100);
+  if (m_rcDlg) m_rcDlg->onProgress();
+}
+
+void cm93depth_pi::OnRouteTimer(wxTimerEvent &) {
+  if (!m_rcChecker.running()) {
+    m_rcTimer.Stop();
+    return;
+  }
+  // a little at a time, so OpenCPN stays responsive
+  bool done = m_rcChecker.step(m_engine, 60.0);
+  if (m_rcDlg) m_rcDlg->onProgress();
+  if (done) {
+    m_rcTimer.Stop();
+    routeCheckDone();
+  }
+}
+
+void cm93depth_pi::routeCheckDone() {
+  m_rcShown = m_rcChecker.result();
+  m_rcShownGuid = m_rcRunningGuid;
+  m_rcShownSig = m_rcRunningSig;
+  const bool isActive = !m_rcActiveGuid.IsEmpty() && m_rcRunningGuid == m_rcActiveGuid;
+  if (isActive) {
+    m_rcActiveValid = true;
+    m_rcActiveSig = m_rcRunningSig;
+    m_rcActiveStatus = m_rcShown.overall;
+    m_rcActiveText = wxString::Format(_("Active route %s: %s"),
+                                      wxString::FromUTF8(m_rcShown.routeName.c_str()),
+                                      wxString::FromUTF8(m_rcShown.status.c_str()));
+  }
+  bool opened = false;
+  if (m_rcAuto && m_s.rcAlarmOnFail && m_rcShown.overall == cm93::CheckStatus::Fail) {
+    showRouteCheck(m_rcShownGuid);
+    opened = true;
+    if (m_s.alarmEnabled && !m_alarmOff) playSound(m_s.alarmSound);
+  }
+  // Drawn while the window shows it (or when kept): an automatic check
+  // that passes with the window closed only updates the display window
+  m_rcDrawn = m_s.rcShowOnChart &&
+              (opened || m_s.rcKeepOnClose || (m_rcDlg && m_rcDlg->IsShown()));
+  m_rcAuto = false;
+  if (m_rcDlg) m_rcDlg->showResult();
+  if (m_parentWindow) RequestRefresh(m_parentWindow);
+  if (m_panel && m_panel->IsShown()) m_panel->refresh();
+}
+
+// The route last checked was deleted or its waypoints changed: its result
+// no longer applies, so it is taken off the chart and out of the window.
+void cm93depth_pi::dropStaleRouteCheck() {
+  if (!m_rcShown.valid || m_rcShownGuid.IsEmpty()) return;
+  if (m_rcChecker.running() && m_rcRunningGuid == m_rcShownGuid) return;  // being re-checked
+  std::vector<cm93::RouteWaypoint> pts;
+  wxString name;
+  uint64_t sig = 0;
+  if (readRoute(m_rcShownGuid, pts, name, sig) && sig == m_rcShownSig) return;
+  clearRouteCheck();
+  if (m_rcDlg) {
+    m_rcDlg->selectRoute(wxEmptyString);  // the deleted route leaves the list
+    m_rcDlg->showResult();
+  }
+}
+
+void cm93depth_pi::pollActiveRoute() {
+  dropStaleRouteCheck();
+  if (!m_s.rcOnActivate) {
+    m_rcActiveGuid.clear();
+    m_rcActiveValid = false;
+    return;
+  }
+  wxString g = GetActiveRouteGUID();
+  if (g != m_rcActiveGuid) {
+    m_rcActiveGuid = g;
+    m_rcActiveValid = false;
+    m_rcActiveText.clear();
+    if (!g.IsEmpty()) startRouteCheck(g, true);
+    return;
+  }
+  // the active route edited: check it again (looked at every ~10 updates)
+  if (g.IsEmpty() || m_rcChecker.running() || ++m_rcPollCount % 10) return;
+  std::vector<cm93::RouteWaypoint> pts;
+  wxString name;
+  uint64_t sig = 0;
+  if (readRoute(g, pts, name, sig) && sig != m_rcActiveSig) startRouteCheck(g, true);
+}
+
+void cm93depth_pi::showRouteCheck(const wxString &guid) {
+  if (!m_rcDlg) m_rcDlg = new RouteCheckDialog(m_parentWindow, this);
+  m_rcDlg->selectRoute(guid.IsEmpty() ? GetActiveRouteGUID() : guid);
+  // the findings in the window are drawn again while it is open
+  if (m_s.rcShowOnChart && m_rcShown.valid && !m_rcDrawn) {
+    m_rcDrawn = true;
+    if (m_parentWindow) RequestRefresh(m_parentWindow);
+  }
+  m_rcDlg->Show();
+  m_rcDlg->Raise();
+}
+
+void cm93depth_pi::OnContextMenuItemCallback(int id) {
+  if (id == m_ctxClearId) {
+    hideRouteDrawing();
+    return;
+  }
+  if (id != m_ctxMenuId) return;
+  wxString g = GetSelectedRouteGUID_Plugin();  // the route right-clicked, if any
+  showRouteCheck(g);
+}
+
+// Just before the chart's right-click menu opens: the clear item only
+// while a route check is drawn
+void cm93depth_pi::PrepareContextMenu(int /*canvasIndex*/) {
+  if (m_ctxClearId >= 0) SetCanvasContextMenuItemViz(m_ctxClearId, routeOverlayWanted());
+}
+
+void cm93depth_pi::applyRouteCheckSettings(const PluginSettings &s) {
+  m_s.rcHalfWidthNm = s.rcHalfWidthNm;
+  m_s.rcWaypointRadiusNm = s.rcWaypointRadiusNm;
+  m_s.rcTideM = s.rcTideM;
+  m_s.rcPoorBand = s.rcPoorBand;
+  m_s.rcUndepthedFails = s.rcUndepthedFails;
+  if (s.rcShowOnChart && !m_s.rcShowOnChart && m_rcShown.valid) m_rcDrawn = true;
+  m_s.rcShowOnChart = s.rcShowOnChart;
+  m_s.rcKeepOnClose = s.rcKeepOnClose;
+  m_s.rcOnActivate = s.rcOnActivate;
+  m_s.rcAlarmOnFail = s.rcAlarmOnFail;
+  saveConfig();
+  if (m_parentWindow) RequestRefresh(m_parentWindow);
+}
+
+void cm93depth_pi::hideRouteDrawing() {
+  m_rcDrawn = false;
+  if (m_parentWindow) RequestRefresh(m_parentWindow);
+}
+
+void cm93depth_pi::clearRouteCheck() {
+  m_rcShown = cm93::RouteCheckResult();
+  m_rcShownGuid.clear();
+  m_rcShownSig = 0;
+  m_rcDrawn = false;
+  if (m_parentWindow) RequestRefresh(m_parentWindow);
+}
+
+void cm93depth_pi::jumpTo(double lat, double lon) {
+  JumpToPosition(lat, lon, m_lastViewScalePpm > 0 ? m_lastViewScalePpm : 0.15);
+}
+
+void cm93depth_pi::onRouteDialogClosed() { m_rcDlg = nullptr; }
+
+bool cm93depth_pi::routeOverlayWanted() const {
+  return m_s.rcShowOnChart && m_rcDrawn && m_rcShown.valid && m_rcShown.waypoints.size() >= 2;
+}
+
+namespace {
+// Colours of the route drawing: leg by status, finding by kind
+wxColour rc_colour(int r, int g, int b, PI_ColorScheme cs) {
+  const int k = cs == PI_GLOBAL_COLOR_SCHEME_NIGHT ? 45 : cs == PI_GLOBAL_COLOR_SCHEME_DUSK ? 75 : 100;
+  return wxColour(r * k / 100, g * k / 100, b * k / 100);
+}
+wxColour status_colour(cm93::CheckStatus s, PI_ColorScheme cs) {
+  switch (s) {
+    case cm93::CheckStatus::Pass: return rc_colour(0, 170, 60, cs);
+    case cm93::CheckStatus::Warn: return rc_colour(235, 150, 0, cs);
+    default: return rc_colour(220, 0, 0, cs);
+  }
+}
+bool issue_marked(const cm93::RouteIssue &i) { return i.kind != cm93::IssueKind::PoorChart; }
+wxColour issue_colour(const cm93::RouteIssue &i, PI_ColorScheme cs) {
+  return i.kind == cm93::IssueKind::Undepthed ? rc_colour(235, 120, 0, cs)
+                                              : rc_colour(255, 0, 0, cs);
+}
+}  // namespace
+
+void cm93depth_pi::drawRouteDC(wxDC &dc, PlugIn_ViewPort *vp) {
+  const cm93::RouteCheckResult &r = m_rcShown;
+  for (const auto &l : r.legs) {
+    const auto &a = r.waypoints[l.index].pos, &b = r.waypoints[l.index + 1].pos;
+    wxPoint p, q;
+    GetCanvasPixLL(vp, &p, a.lat, a.lon);
+    GetCanvasPixLL(vp, &q, b.lat, b.lon);
+    dc.SetPen(wxPen(status_colour(l.status, m_colorScheme), 5));
+    dc.DrawLine(p, q);
+  }
+  dc.SetBrush(*wxTRANSPARENT_BRUSH);
+  auto ring = [&](const cm93::RouteIssue &i) {
+    if (!issue_marked(i)) return;
+    wxPoint q;
+    GetCanvasPixLL(vp, &q, i.pos.lat, i.pos.lon);
+    dc.SetPen(wxPen(issue_colour(i, m_colorScheme), 3));
+    dc.DrawCircle(q, 8);
+  };
+  for (const auto &l : r.legs)
+    for (const auto &i : l.issues) ring(i);
+  for (const auto &w : r.waypoints)
+    for (const auto &i : w.issues) ring(i);
+}
+
+void cm93depth_pi::drawRouteGL(PlugIn_ViewPort *vp) {
+#ifdef CM93DEPTH_NO_GL
+  (void)vp;
+#else
+  const cm93::RouteCheckResult &r = m_rcShown;
+  glPushAttrib(GL_LINE_BIT | GL_ENABLE_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT |
+               GL_HINT_BIT);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glEnable(GL_LINE_SMOOTH);
+  glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+  glLineWidth(5.0f);
+  for (const auto &l : r.legs) {
+    const auto &a = r.waypoints[l.index].pos, &b = r.waypoints[l.index + 1].pos;
+    wxPoint p, q;
+    GetCanvasPixLL(vp, &p, a.lat, a.lon);
+    GetCanvasPixLL(vp, &q, b.lat, b.lon);
+    wxColour c = status_colour(l.status, m_colorScheme);
+    glColor4ub(c.Red(), c.Green(), c.Blue(), 170);
+    glBegin(GL_LINES);
+    glVertex2i(p.x, p.y);
+    glVertex2i(q.x, q.y);
+    glEnd();
+  }
+  glLineWidth(3.0f);
+  auto ring = [&](const cm93::RouteIssue &i) {
+    if (!issue_marked(i)) return;
+    wxPoint q;
+    GetCanvasPixLL(vp, &q, i.pos.lat, i.pos.lon);
+    wxColour c = issue_colour(i, m_colorScheme);
+    glColor4ub(c.Red(), c.Green(), c.Blue(), 255);
+    glBegin(GL_LINE_LOOP);
+    for (int k = 0; k < 20; k++) {
+      double t = 6.283185307179586 * k / 20;
+      glVertex2d(q.x + 8 * std::cos(t), q.y + 8 * std::sin(t));
+    }
+    glEnd();
+  };
+  for (const auto &l : r.legs)
+    for (const auto &i : l.issues) ring(i);
+  for (const auto &w : r.waypoints)
+    for (const auto &i : w.issues) ring(i);
+  glPopAttrib();
 #endif
 }
 
@@ -1262,6 +1673,22 @@ void cm93depth_pi::loadConfig() {
   c->Read(_T("MarkIcon"), &m_s.markIcon, m_s.markIcon);
   c->Read(_T("PanelVisible"), &m_s.panelVisible, m_s.panelVisible);
   c->Read(_T("PanelCompact"), &m_s.panelCompact, m_s.panelCompact);
+  c->Read(_T("RcHalfWidthNm"), &m_s.rcHalfWidthNm, m_s.rcHalfWidthNm);
+  c->Read(_T("RcWaypointRadiusNm"), &m_s.rcWaypointRadiusNm, m_s.rcWaypointRadiusNm);
+  c->Read(_T("RcTideM"), &m_s.rcTideM, m_s.rcTideM);
+  {
+    wxString b(wxString(m_s.rcPoorBand));
+    c->Read(_T("RcPoorBand"), &b, b);
+    if (!b.IsEmpty() && cm93::slot_from_char((char)b[0]) >= 0) m_s.rcPoorBand = (char)b[0];
+  }
+  c->Read(_T("RcUndepthedFails"), &m_s.rcUndepthedFails, m_s.rcUndepthedFails);
+  c->Read(_T("RcShowOnChart"), &m_s.rcShowOnChart, m_s.rcShowOnChart);
+  c->Read(_T("RcKeepOnClose"), &m_s.rcKeepOnClose, m_s.rcKeepOnClose);
+  c->Read(_T("RcOnActivate"), &m_s.rcOnActivate, m_s.rcOnActivate);
+  c->Read(_T("RcAlarmOnFail"), &m_s.rcAlarmOnFail, m_s.rcAlarmOnFail);
+  m_s.rcHalfWidthNm = std::clamp(m_s.rcHalfWidthNm, 0.01, 5.0);
+  m_s.rcWaypointRadiusNm = std::clamp(m_s.rcWaypointRadiusNm, 0.0, 5.0);
+  m_s.rcTideM = std::clamp(m_s.rcTideM, -5.0, 15.0);
   int x = -1, y = -1;
   c->Read(_T("PanelX"), &x, -1);
   c->Read(_T("PanelY"), &y, -1);
@@ -1351,6 +1778,15 @@ void cm93depth_pi::saveConfig() {
   c->Write(_T("MarkIcon"), m_s.markIcon);
   c->Write(_T("PanelVisible"), m_s.panelVisible);
   c->Write(_T("PanelCompact"), m_s.panelCompact);
+  c->Write(_T("RcHalfWidthNm"), m_s.rcHalfWidthNm);
+  c->Write(_T("RcWaypointRadiusNm"), m_s.rcWaypointRadiusNm);
+  c->Write(_T("RcTideM"), m_s.rcTideM);
+  c->Write(_T("RcPoorBand"), wxString(m_s.rcPoorBand));
+  c->Write(_T("RcUndepthedFails"), m_s.rcUndepthedFails);
+  c->Write(_T("RcShowOnChart"), m_s.rcShowOnChart);
+  c->Write(_T("RcKeepOnClose"), m_s.rcKeepOnClose);
+  c->Write(_T("RcOnActivate"), m_s.rcOnActivate);
+  c->Write(_T("RcAlarmOnFail"), m_s.rcAlarmOnFail);
   if (m_panel) m_s.panelPos = m_panel->GetPosition();
   c->Write(_T("PanelX"), m_s.panelPos.x);
   c->Write(_T("PanelY"), m_s.panelPos.y);

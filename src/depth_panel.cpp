@@ -67,6 +67,11 @@ DepthPanel::DepthPanel(wxWindow *parent, cm93depth_pi *plugin)
     m_alarmOffText->SetFont(f);
   }
   top->Add(m_alarmOffText, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 6);
+  m_routeLine = new wxStaticText(this, wxID_ANY, wxEmptyString);
+  m_routeLine->SetFont(m_alarmOffText->GetFont());
+  m_routeLine->SetToolTip(_("Result of the automatic check of the active route; click "
+                            "Route check... (enlarged window) for the findings"));
+  top->Add(m_routeLine, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 6);
   top->AddSpacer(6);
 
   auto add = [&](wxStaticText *&t) {
@@ -100,6 +105,9 @@ DepthPanel::DepthPanel(wxWindow *parent, cm93depth_pi *plugin)
   m_report = new wxButton(this, wxID_ANY, _("Copy report"));
   m_report->SetToolTip(_("Copy a troubleshooting report for this position to the clipboard"));
   m_report->Bind(wxEVT_BUTTON, &DepthPanel::onCopyReport, this);
+  m_routeBtn = new wxButton(this, wxID_ANY, _("Route check..."));
+  m_routeBtn->SetToolTip(_("Check a route's charted depths before following it"));
+  m_routeBtn->Bind(wxEVT_BUTTON, &DepthPanel::onRouteCheck, this);
   m_settings = new wxButton(this, wxID_ANY, _("Settings..."));
   m_settings->Bind(wxEVT_BUTTON, &DepthPanel::onSettings, this);
   btns->Add(m_toggle, 0, wxRIGHT, 6);
@@ -107,6 +115,7 @@ DepthPanel::DepthPanel(wxWindow *parent, cm93depth_pi *plugin)
   m_alarmBtn->Bind(wxEVT_BUTTON, &DepthPanel::onAlarmButton, this);
   btns->Add(m_alarmBtn, 0, wxRIGHT, 6);
   btns->AddStretchSpacer();
+  btns->Add(m_routeBtn, 0, wxRIGHT, 6);
   btns->Add(m_report, 0, wxRIGHT, 6);
   btns->Add(m_settings, 0);
   top->Add(btns, 0, wxEXPAND | wxALL, 6);
@@ -131,6 +140,8 @@ void DepthPanel::onAlarmButton(wxCommandEvent &) {
   refresh();
 }
 
+void DepthPanel::onRouteCheck(wxCommandEvent &) { m_pi->showRouteCheck(wxEmptyString); }
+
 void DepthPanel::onToggleSize(wxCommandEvent &) {
   m_compact = !m_compact;
   m_pi->setPanelCompact(m_compact);
@@ -145,7 +156,7 @@ void DepthPanel::applyCompact() {
   const PluginSettings &s = m_pi->settings();
   for (wxWindow *w : std::initializer_list<wxWindow *>{
            m_where, m_atPos, m_hazards, m_scope, m_statusLine, m_status, m_output,
-           m_sentence, m_report, m_settings})
+           m_sentence, m_report, m_settings, m_routeBtn})
     w->Show(full);
   const bool laFull = full && s.laEnabled;
   m_lookLine->Show(laFull);
@@ -345,6 +356,23 @@ void DepthPanel::refresh() {
     m_alarmOffText->SetLabel(t);
     m_alarmOffText->SetForegroundColour(wxColour(200, 120, 0));
     m_alarmOffText->Show(!t.IsEmpty());
+  }
+
+  // ---- active route's check (both sizes): only when it is not a pass
+  {
+    wxString t;
+    if (m_pi->activeRouteChecked() && m_pi->activeRouteStatus() != cm93::CheckStatus::Pass)
+      t = m_pi->activeRouteStatus() == cm93::CheckStatus::Fail
+              ? _("ACTIVE ROUTE FAILS THE DEPTH CHECK")
+              : _("Active route: depth check warnings");
+    else if (m_pi->activeRouteChecked() && !m_compact)
+      t = _("Active route: depth check passed");
+    m_routeLine->SetLabel(t);
+    m_routeLine->SetForegroundColour(
+        m_pi->activeRouteStatus() == cm93::CheckStatus::Fail ? wxColour(200, 0, 0)
+        : m_pi->activeRouteStatus() == cm93::CheckStatus::Warn ? wxColour(200, 120, 0)
+                                                               : wxColour(0, 130, 40));
+    m_routeLine->Show(!t.IsEmpty());
   }
 
   // ---- what the big figure is (both sizes)

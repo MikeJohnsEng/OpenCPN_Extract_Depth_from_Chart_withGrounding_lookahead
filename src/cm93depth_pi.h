@@ -28,15 +28,17 @@
 
 #include "alarm_logic.h"
 #include "depth_engine.h"
+#include "route_check.h"
 #include "ocpn_plugin.h"
 #include "serial_port.h"
 
 #define PLUGIN_VERSION_MAJOR 1
-#define PLUGIN_VERSION_MINOR 5
+#define PLUGIN_VERSION_MINOR 6
 #define PLUGIN_VERSION_PATCH 2
 
 class DepthPanel;
 class AlarmDialog;
+class RouteCheckDialog;
 
 enum class OutputRoute : int {
   Off = 0,
@@ -103,6 +105,16 @@ struct PluginSettings {
   int alarmSilenceSec;    // Silence button mutes for this long
   bool alarmSendAlr;      // send $IIALR on the NMEA output
   int alarmOffRearmMin;   // switched-off alarm comes back on after this; 0 = never
+  // Route check
+  double rcHalfWidthNm;   // corridor each side of every leg
+  double rcWaypointRadiusNm;  // circle checked round every waypoint
+  double rcTideM;         // height of tide added to charted depths
+  char rcPoorBand;        // least detailed band taken as properly charted
+  bool rcUndepthedFails;  // undepthed dangers / gaps fail (else warn)
+  bool rcShowOnChart;     // draw the checked route and its findings
+  bool rcKeepOnClose;     // keep the drawing when the window is closed
+  bool rcOnActivate;      // check a route automatically when activated
+  bool rcAlarmOnFail;     // ... and sound / show the result if it fails
   // Display
   bool markOnChart;
   wxString markIcon;
@@ -130,6 +142,8 @@ public:
   wxString GetLongDescription() override;
   int GetToolbarToolCount() override;
   void OnToolbarToolCallback(int id) override;
+  void OnContextMenuItemCallback(int id) override;
+  void PrepareContextMenu(int canvasIndex) override;
   void ShowPreferencesDialog(wxWindow *parent) override;
   void SetPositionFixEx(PlugIn_Position_Fix_Ex &pfix) override;
   void SetColorScheme(PI_ColorScheme cs) override;
@@ -169,6 +183,24 @@ public:
   const cm93::AlarmLogic &alarm() const { return m_alarm; }
   wxString alarmText() const { return m_alarmText; }
 
+  // Route check (route_dialog.cpp uses these)
+  void showRouteCheck(const wxString &guid);  // open the window; "" = pick one
+  void startRouteCheck(const wxString &guid, bool automatic);
+  void applyRouteCheckSettings(const PluginSettings &s);  // the rc* fields
+  bool routeCheckRunning() const { return m_rcChecker.running(); }
+  double routeCheckProgress() const { return m_rcChecker.progress(); }
+  bool haveRouteCheck() const { return m_rcShown.valid; }
+  const cm93::RouteCheckResult &routeCheckResult() const { return m_rcShown; }
+  wxString routeCheckGuid() const { return m_rcShownGuid; }
+  void clearRouteCheck();     // forget the last check (route gone or changed)
+  void hideRouteDrawing();    // take it off the chart, keep the findings
+  void jumpTo(double lat, double lon);
+  void onRouteDialogClosed();
+  // Active route checked automatically: status and one line for the window
+  bool activeRouteChecked() const { return m_rcActiveValid; }
+  cm93::CheckStatus activeRouteStatus() const { return m_rcActiveStatus; }
+  wxString activeRouteText() const { return m_rcActiveText; }
+
   // Labels for OpenCPN NMEA 0183 output connections ("Serial /dev/ttyUSB0")
   static wxArrayString listOpenCPNConnections();
 
@@ -191,6 +223,16 @@ private:
   void togglePanel(bool show);
   void updateAlarm();
   void closeAlarmWindow();
+  void OnRouteTimer(wxTimerEvent &event);
+  void routeCheckDone();
+  void pollActiveRoute();
+  void dropStaleRouteCheck();
+  bool readRoute(const wxString &guid, std::vector<cm93::RouteWaypoint> &pts,
+                 wxString &name, uint64_t &signature) const;
+  void drawRouteDC(wxDC &dc, PlugIn_ViewPort *vp);
+  void drawRouteGL(PlugIn_ViewPort *vp);
+  bool routeOverlayWanted() const;
+  cm93::RouteCheckConfig routeCheckConfig() const;
 
   PluginSettings m_s;
   cm93::DepthEngine m_engine;
@@ -232,6 +274,27 @@ private:
   wxWindow *m_parentWindow = nullptr;
   std::unique_ptr<wxBitmap> m_icon;
   PI_ColorScheme m_colorScheme = PI_GLOBAL_COLOR_SCHEME_DAY;
+
+  // route check
+  cm93::RouteChecker m_rcChecker;
+  wxTimer m_rcTimer;
+  bool m_rcAuto = false;            // the running check is the automatic one
+  wxString m_rcRunningGuid;
+  uint64_t m_rcRunningSig = 0;
+  cm93::RouteCheckResult m_rcShown;  // last completed check
+  wxString m_rcShownGuid;
+  uint64_t m_rcShownSig = 0;        // its waypoints when it was checked
+  bool m_rcDrawn = false;           // ... and it is drawn on the chart
+  RouteCheckDialog *m_rcDlg = nullptr;
+  int m_ctxMenuId = -1;
+  int m_ctxClearId = -1;            // "Clear route check from chart"
+  wxString m_rcActiveGuid;          // active route last seen
+  uint64_t m_rcActiveSig = 0;       // its waypoints when it was checked
+  bool m_rcActiveValid = false;
+  cm93::CheckStatus m_rcActiveStatus = cm93::CheckStatus::Pass;
+  wxString m_rcActiveText;
+  int m_rcPollCount = 0;
+  double m_lastViewScalePpm = 0;    // chart scale, for jumping to a finding
 
   // alarm
   cm93::AlarmLogic m_alarm;

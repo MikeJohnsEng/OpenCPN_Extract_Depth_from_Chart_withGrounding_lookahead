@@ -33,6 +33,7 @@ private:
   void onCopyReport(wxCommandEvent &e);
   void onToggleSize(wxCommandEvent &e);
   void onAlarmButton(wxCommandEvent &e);
+  void onRouteCheck(wxCommandEvent &e);
   void applyCompact();  // show/hide for the current size and re-fit
 
   cm93depth_pi *m_pi;
@@ -44,6 +45,8 @@ private:
   wxStaticText *m_alarmOffText;
   wxButton *m_report;
   wxButton *m_settings;
+  wxButton *m_routeBtn;       // opens the route check
+  wxStaticText *m_routeLine;  // active route's check result
   wxStaticLine *m_statusLine;
   bool m_compact = false;
   wxStaticText *m_where;

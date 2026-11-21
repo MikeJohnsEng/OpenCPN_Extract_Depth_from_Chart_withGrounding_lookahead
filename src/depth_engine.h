@@ -190,6 +190,7 @@ struct LookAheadConfig {
   double safetyDepthM = 5.0;   // shallower than this counts as a shoal
   double minSogKn = 0.5;       // below this the course comes from heading
   bool undepthedAsShoal = true;  // undepthed dangers count as shoals
+  bool collectHits = false;      // keep every object found (route check)
 };
 
 // One object found in the zone
@@ -230,6 +231,8 @@ struct LookAheadResult {
   bool haveUndepthed = false;
   LookHit nearestUndepthed;
   bool landInZone = false;
+
+  std::vector<LookHit> hits;  // every object found, if collectHits
 
   // Scale used along the zone, e.g. "0.00-1.20 G, 1.20-5.00 E"
   std::string scaleTrace;

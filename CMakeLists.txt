@@ -43,6 +43,7 @@ set(CORE_SRC
     src/lookahead.cpp
     src/s57_reader.cpp src/s57_reader.h src/s57_codes.cpp
     src/enc_index.cpp src/enc_index.h
+    src/route_check.cpp src/route_check.h
     src/nmea_out.cpp src/nmea_out.h
     src/serial_port.cpp src/serial_port.h
 )
@@ -61,6 +62,7 @@ set(PLUGIN_SRC
     src/cm93depth_pi.cpp src/cm93depth_pi.h
     src/depth_panel.cpp src/depth_panel.h
     src/prefs_dialog.cpp src/prefs_dialog.h
+    src/route_dialog.cpp src/route_dialog.h
     src/icons.cpp src/icons.h
     src/alarm_dialog.cpp src/alarm_dialog.h src/alarm_logic.h
 )
@@ -153,7 +155,7 @@ endif ()
 if (CM93DEPTH_BUILD_TESTS)
   add_executable(test_core tests/test_core.cpp
       src/cm93_reader.cpp src/depth_engine.cpp src/lookahead.cpp src/nmea_out.cpp
-      src/s57_reader.cpp src/s57_codes.cpp src/enc_index.cpp)
+      src/s57_reader.cpp src/s57_codes.cpp src/enc_index.cpp src/route_check.cpp)
   target_include_directories(test_core PRIVATE src tests)
   if (LIBLZMA_FOUND)
     target_compile_definitions(test_core PRIVATE HAVE_LZMA)

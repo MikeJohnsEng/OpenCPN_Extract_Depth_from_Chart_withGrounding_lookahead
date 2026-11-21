@@ -5,7 +5,7 @@ Same two jobs as on Windows:
 
   BUILD    once per distribution release and architecture, with
            linux/build_linux.sh. Result: a plugin tarball, e.g.
-             linux/dist/cm93depth_pi-1.5.2-0_debian-13-arm64.tar.gz
+             linux/dist/cm93depth_pi-1.6.2-0_debian-13-arm64.tar.gz
   INSTALL  on any PC with that release and architecture, from inside
            OpenCPN: Options > Plugins > Import plugin...
 

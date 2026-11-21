@@ -30,6 +30,7 @@
 #include "s57_reader.h"
 #include "enc_index.h"
 #include "s57_writer.h"
+#include "route_check.h"
 
 #ifdef HAVE_LZMA
 #include <lzma.h>
@@ -842,6 +843,83 @@ static void test_enc(const fs::path &cm93root, double shipLat, double shipLon, d
     std::string diag = eng.diagnostics(la, lo, c);
     CHECK(diag.find("[5] ENC ZZ5HARB1.000, Harbour band, 1:12000") != std::string::npos);
     CHECK(diag.find("CONTAINS position") != std::string::npos);
+  }
+
+  // ---- route check (harbour cell only, before the updates below)
+  {
+    double c, d;
+    rhumb_course_distance({0, 0}, {1, 0}, c, d);
+    CHECK(std::fabs(c) < 1e-9 && std::fabs(d - 60.0) < 1e-6);
+    rhumb_course_distance({-42.8, 147.5}, {-42.8, 148.5}, c, d);
+    CHECK(std::fabs(c - 90.0) < 1e-6 && std::fabs(d - 60.0 * std::cos(42.8 * kDeg)) < 0.01);
+    LatLon q = rhumb_destination({-42.8, 147.5}, 37.0, 25.0);
+    rhumb_course_distance({-42.8, 147.5}, q, c, d);
+    CHECK(std::fabs(c - 37.0) < 1e-6 && std::fabs(d - 25.0) < 1e-6);
+
+    auto run = [&](const std::vector<RouteWaypoint> &wps, const RouteCheckConfig &rc) {
+      RouteChecker ck;
+      ck.start(wps, "test", rc, EngineConfig());
+      int steps = 0;
+      while (!ck.step(eng, 5.0)) steps++;
+      CHECK(ck.result().valid && !ck.running());
+      return ck.result();
+    };
+    auto has = [](const std::vector<RouteIssue> &v, IssueKind k) {
+      for (auto &i : v)
+        if (i.kind == k) return true;
+      return false;
+    };
+    RouteCheckConfig rc;
+    rc.halfWidthNm = 0.1;
+    rc.safetyDepthM = 5.0;
+    // 1. along the south of the harbour in 10-20 m: clear
+    RouteCheckResult r = run({{la - 0.04, lo - 0.04, "A"}, {la - 0.04, lo + 0.04, "B"}}, rc);
+    CHECK(r.overall == CheckStatus::Pass && r.legs.size() == 1 && r.waypoints.size() == 2);
+    CHECK(r.legs[0].haveLeast && std::fabs(r.legs[0].leastDepth - 10.0) < 1e-9);
+    CHECK(r.legs[0].coarsestBand == '5' && r.waypoints[0].haveDepth);
+    // 2. east through the 3-6 m area round the ship and over the island
+    std::vector<RouteWaypoint> east = {{la, lo - 0.04, "W"}, {la, lo + 0.04, "E"}};
+    r = run(east, rc);
+    CHECK(r.overall == CheckStatus::Fail && r.legs[0].status == CheckStatus::Fail);
+    CHECK(has(r.legs[0].issues, IssueKind::Shoal) && has(r.legs[0].issues, IssueKind::Land));
+    const double degNm = 60.0 * std::cos(la * kDeg);
+    for (auto &i : r.legs[0].issues) {
+      if (i.kind == IssueKind::Shoal) CHECK(i.alongNm > 0.03 * degNm - 0.02 && i.depth <= 4.2 + 1e-9);
+      if (i.kind == IssueKind::Land) CHECK(std::fabs(i.alongNm - 0.06 * degNm) < 0.02);
+    }
+    //    with 2.5 m of tide the 3 m area clears 5 m; the island does not
+    rc.tideM = 2.5;
+    r = run(east, rc);
+    CHECK(!has(r.legs[0].issues, IssueKind::Shoal) && has(r.legs[0].issues, IssueKind::Land));
+    rc.tideM = 0;
+    // 3. a waypoint on the island
+    r = run({{la - 0.04, lo + 0.025, "S"}, {la, lo + 0.025, "ISLAND"}}, rc);
+    CHECK(r.waypoints[1].onLand && r.waypoints[1].status == CheckStatus::Fail);
+    // 4. north past the gap: an undepthed danger (fails, or warns if so set)
+    std::vector<RouteWaypoint> north = {{la + 0.012, lo - 0.0075, "N1"},
+                                        {la + 0.04, lo - 0.0075, "N2"}};
+    r = run(north, rc);
+    CHECK(has(r.legs[0].issues, IssueKind::Undepthed) && r.legs[0].status == CheckStatus::Fail);
+    rc.undepthedFails = false;
+    r = run(north, rc);
+    CHECK(r.legs[0].status == CheckStatus::Warn);
+    rc.undepthedFails = true;
+    // 5. demanding more detailed charts than band 5: a warning
+    rc.poorBandSlot = slot_from_char('6');
+    r = run({{la - 0.04, lo - 0.04, "A"}, {la - 0.04, lo + 0.04, "B"}}, rc);
+    CHECK(r.overall == CheckStatus::Warn && has(r.legs[0].issues, IssueKind::PoorChart));
+    rc.poorBandSlot = slot_from_char('C');
+    // 6. a long leg running off the chart: in pieces, and "no chart" past its edge
+    r = run({{la - 0.04, lo - 0.04, "A"}, {la - 0.04, lo + 0.30, "FAR"}}, rc);
+    CHECK(r.legs[0].lengthNm > 14 && has(r.legs[0].issues, IssueKind::NoChart) &&
+          r.overall == CheckStatus::Fail);
+    // one waypoint is not a route
+    RouteChecker ck;
+    ck.start({{la, lo, "X"}}, "one", rc, EngineConfig());
+    CHECK(!ck.running() && !ck.result().valid);
+    std::string rep = route_check_report(run(east, rc));
+    CHECK(rep.find("RESULT: FAIL") != std::string::npos && rep.find("LAND") != std::string::npos);
+    std::cout << rep;
   }
 
   // ---- updates: .001 inner area 3 -> 2.5 m; .002 deletes the rock;

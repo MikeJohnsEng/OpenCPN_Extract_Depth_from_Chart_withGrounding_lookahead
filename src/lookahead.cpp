@@ -642,6 +642,7 @@ LookAheadResult DepthEngine::lookAhead(double lat, double lon, double cogDeg,
     }
   }
   res.status = res.haveShoal ? "Shoal ahead" : "Clear";
+  if (lc.collectHits) res.hits = std::move(hits);
   return res;
 }
 
