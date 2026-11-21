@@ -30,7 +30,7 @@ Building
        bash ~/cm93depth_pi/linux/build_linux.sh
    It installs what it needs with apt (asks for your password once):
    cmake, g++, the wxWidgets 3.2 GTK development files (the same library
-   OpenCPN uses), liblzma-dev, libgl-dev, lsb-release. Then it builds
+   OpenCPN uses), liblzma-dev and libgl-dev. Then it builds
    libcm93depth_pi.so and packages it as linux/dist/....tar.gz.
    A Raspberry Pi 4/5 takes a few minutes.
 

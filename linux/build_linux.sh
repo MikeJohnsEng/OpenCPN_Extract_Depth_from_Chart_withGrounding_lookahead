@@ -57,12 +57,17 @@ fi
 
 # ---- 2. Build tools and libraries ---------------------------------------------
 step "Checking build tools"
+# root (a build container) has no sudo and needs none
+SUDO=""
+[ "$(id -u)" -ne 0 ] && SUDO=sudo
+export DEBIAN_FRONTEND=noninteractive
 need=()
 command -v cmake >/dev/null || need+=(cmake)
 command -v g++ >/dev/null || need+=(build-essential)
-command -v lsb_release >/dev/null || need+=(lsb-release)
 if ! command -v wx-config >/dev/null; then
-  # wxWidgets 3.2 GTK3 development files (same library OpenCPN uses)
+  # wxWidgets 3.2 GTK3 development files (same library OpenCPN uses); the
+  # package lists may be empty on a fresh system, so refresh them first
+  $SUDO apt-get update -q
   if apt-cache show libwxgtk3.2-dev >/dev/null 2>&1; then need+=(libwxgtk3.2-dev)
   else need+=(libwxgtk3.0-gtk3-dev); fi
 fi
@@ -70,8 +75,8 @@ dpkg -s liblzma-dev >/dev/null 2>&1 || need+=(liblzma-dev)
 [ -f /usr/include/GL/gl.h ] || need+=(libgl-dev)
 if [ ${#need[@]} -gt 0 ]; then
   echo "    installing: ${need[*]}"
-  sudo apt-get update -q
-  sudo apt-get install -y -q "${need[@]}"
+  $SUDO apt-get update -q
+  $SUDO apt-get install -y -q --no-install-recommends "${need[@]}"
 fi
 echo "    wxWidgets $(wx-config --version) ($(wx-config --selected-config))"
 
@@ -97,8 +102,13 @@ echo "    $SO"
 step "Packaging the plugin for OpenCPN"
 VER="$(sed -n 's/^#define PLUGIN_VERSION_\(MAJOR\|MINOR\|PATCH\) \([0-9]*\).*/\2/p' \
         "$SRC/src/cm93depth_pi.h" | paste -sd.)"
-DISTRO="$(lsb_release -is | tr 'A-Z ' 'a-z_')"
-REL="$(lsb_release -rs)"
+if command -v lsb_release >/dev/null 2>&1; then
+  DISTRO="$(lsb_release -is | tr 'A-Z ' 'a-z_')"
+  REL="$(lsb_release -rs)"
+else  # same names from /etc/os-release
+  DISTRO="$(. /etc/os-release && echo "$ID" | tr 'A-Z ' 'a-z_')"
+  REL="$(. /etc/os-release && echo "${VERSION_ID:-unknown}")"
+fi
 case "$(uname -m)" in
   x86_64) ARCH=x86_64 ;;
   aarch64|arm64) ARCH=arm64 ;;
@@ -116,13 +126,13 @@ cat > "$STAGE/$TOP/metadata.xml" <<EOF
   <name>CM93 Least Depth</name>
   <version>$VER.0</version>
   <release>0</release>
-  <summary>Least charted depth and look-ahead from CM93 charts, output as NMEA</summary>
+  <summary>Least charted depth, look-ahead and route check from CM93 and S-57 charts, output as NMEA</summary>
   <api-version>1.18</api-version>
   <open-source>yes</open-source>
   <author>cm93depth_pi</author>
   <source>local build</source>
   <info-url></info-url>
-  <description>Reads the CM93 vector charts at the vessel and ahead of it. Sends the least charted depth (\$PCMLD) and the first shoal ahead (\$PCMLA) as NMEA 0183. Built for $DISTRO $REL $ARCH, wxWidgets $WXV.</description>
+  <description>Reads the CM93 and S-57 ENC vector charts at the vessel and ahead of it, and checks planned routes. Sends the least charted depth (\$PCMLD) and the first shoal ahead (\$PCMLA) as NMEA 0183. Built for $DISTRO $REL $ARCH, wxWidgets $WXV.</description>
   <target>all</target>
   <target-version>$REL</target-version>
   <target-arch>$ARCH</target-arch>

@@ -1,0 +1,145 @@
+# Copyright (C) 2026 Mike
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Builds the cm93depth_pi plugin for Linux PCs and Raspberry Pi on GitHub's
+# machines, with the same script as a local build (linux/build_linux.sh),
+# and attaches the plugin tarballs to the release.
+#
+#  - Runs by itself when a release is published, and attaches the tarballs
+#    to that release.
+#  - Can be run by hand: Actions tab > "Build Linux and Raspberry Pi
+#    plugins" > Run workflow. Give a release tag to attach the tarballs to
+#    that release, or leave it empty to only keep them as downloads
+#    ("artifacts") on the run's page for 90 days.
+#  - Anyone can fork the repository and run it in their fork.
+#
+# One tarball per target: it installs (OpenCPN > Options > Plugins >
+# Import plugin...) on any machine with that distribution release and
+# architecture.
+#
+#   ubuntu-24.04   x86_64  Ubuntu 24.04, Linux Mint 22
+#   ubuntu-22.04   x86_64  Ubuntu 22.04, Linux Mint 21 (wxWidgets 3.2 from
+#                          the OpenCPN PPA, as OpenCPN there uses)
+#   debian-13      x86_64  Debian 13 "trixie"
+#   debian-13      arm64   Raspberry Pi OS 64-bit (trixie), Pi 3/4/5
+#   debian-13      armhf   Raspberry Pi OS 32-bit (trixie); built under
+#                          emulation, so it takes much longer
+
+name: Build Linux and Raspberry Pi plugins
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach to (empty = build main, no release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write  # to attach the tarballs to a release
+
+env:
+  REF: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag || github.ref }}
+
+jobs:
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - name: Build and run the core tests
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends liblzma-dev
+          g++ -std=c++17 -O2 -Wall -Wextra -DHAVE_LZMA -Isrc -Itests tests/test_core.cpp \
+              src/cm93_reader.cpp src/depth_engine.cpp src/lookahead.cpp src/nmea_out.cpp \
+              src/s57_reader.cpp src/s57_codes.cpp src/enc_index.cpp src/route_check.cpp \
+              -llzma -o test_core
+          ./test_core
+
+  build:
+    name: ${{ matrix.name }}
+    needs: tests
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 24.04 / Mint 22 (x86_64)
+            runner: ubuntu-24.04
+            image: ubuntu:24.04
+            artifact: ubuntu-24.04-x86_64
+          - name: Ubuntu 22.04 / Mint 21 (x86_64)
+            runner: ubuntu-24.04
+            image: ubuntu:22.04
+            artifact: ubuntu-22.04-x86_64
+            ppa: true
+          - name: Debian 13 (x86_64)
+            runner: ubuntu-24.04
+            image: debian:trixie
+            artifact: debian-13-x86_64
+          - name: Raspberry Pi OS 64-bit / Debian 13 (arm64)
+            runner: ubuntu-24.04-arm
+            image: debian:trixie
+            artifact: debian-13-arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - name: OpenCPN PPA (wxWidgets 3.2)
+        if: matrix.ppa
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q software-properties-common
+          add-apt-repository -y ppa:opencpn/opencpn
+      - name: Build and package
+        run: bash linux/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: linux/dist/*.tar.gz
+          if-no-files-found: error
+
+  build-armhf:
+    name: Raspberry Pi OS 32-bit / Debian 13 (armhf, emulated)
+    needs: tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+      - name: Build and package (32-bit ARM container)
+        run: |
+          docker run --rm --platform linux/arm/v7 -v "$PWD:/src" -w /src \
+              arm32v7/debian:trixie bash linux/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-13-armhf
+          path: linux/dist/*.tar.gz
+          if-no-files-found: error
+
+  attach:
+    name: Attach to the release
+    needs: [build, build-armhf]
+    if: ${{ always() && (github.event_name == 'release' || inputs.tag != '') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Upload the tarballs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          ls -l dist
+          gh release upload "$TAG" dist/*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"

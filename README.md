@@ -26,6 +26,21 @@ An OpenCPN plugin that reads the vector chart under the vessel (a CM93 cell, or 
 
 Depths are charted values below chart datum. No tide is applied.
 
+## Downloads
+
+Ready-built plugin packages are on the **Releases** page (right-hand side of the repository page): pick the file for your system and import it into OpenCPN through **Options → Plugins → Import plugin…**, then enable the plugin.
+
+| File name contains | For |
+|---|---|
+| `msvc-wx32 … x86` | Windows, 32-bit OpenCPN (built by hand) |
+| `ubuntu-24.04-x86_64` | Ubuntu 24.04, Linux Mint 22 |
+| `ubuntu-22.04-x86_64` | Ubuntu 22.04, Linux Mint 21 |
+| `debian-13-x86_64` | Debian 13 PCs |
+| `debian-13-arm64` | Raspberry Pi OS 64-bit (trixie), Pi 3 / 4 / 5 |
+| `debian-13-armhf` | Raspberry Pi OS 32-bit (trixie) |
+
+The Linux and Raspberry Pi packages are built on GitHub by `.github/workflows/build-linux.yml` whenever a release is published, with the same script as a local build. To build them yourself on GitHub: fork this repository, open your fork's **Actions** tab, choose **Build Linux and Raspberry Pi plugins** and **Run workflow**; the packages appear as downloads on that run's page. For any other Linux system, build on the machine itself (below).
+
 ## Getting the source
 
 Clone or download this repository (GitHub: Code > Download ZIP). The build scripts work from wherever the folder is; where this README or the guides say `~/cm93depth_pi`, use the folder you cloned or unzipped to. The manual and the Linux / Raspberry Pi build guide are in `doc/` (LibreOffice `.odt`).
