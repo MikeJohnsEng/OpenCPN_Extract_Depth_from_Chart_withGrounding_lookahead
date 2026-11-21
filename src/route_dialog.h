@@ -52,7 +52,7 @@ private:
   cm93depth_pi *m_pi;
   wxChoice *m_route;
   wxArrayString m_guids;
-  wxSpinCtrlDouble *m_halfW, *m_wpR, *m_tide;
+  wxSpinCtrlDouble *m_halfW, *m_wpR, *m_tide, *m_sparse;
   wxChoice *m_poor;
   wxCheckBox *m_undep, *m_show, *m_keep, *m_onActivate, *m_alarm;
   void closeWindow();  // hide, clearing the chart drawing unless kept

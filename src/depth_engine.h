@@ -15,6 +15,7 @@
  ***************************************************************************/
 #pragma once
 
+#include <limits>
 #include <list>
 #include <map>
 #include <memory>
@@ -196,6 +197,7 @@ struct LookAheadConfig {
 // One object found in the zone
 struct LookHit {
   double depth = 0;     // m below chart datum (NaN for land / undepthed)
+  double depth2 = std::numeric_limits<double>::quiet_NaN();  // depth area: DRVAL2
   bool land = false;
   bool undepthed = false;
   std::string cls;      // S-57 class, "LNDARE" for land

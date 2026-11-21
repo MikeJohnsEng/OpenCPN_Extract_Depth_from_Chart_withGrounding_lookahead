@@ -94,6 +94,17 @@ RouteCheckDialog::RouteCheckDialog(wxWindow *parent, cm93depth_pi *plugin)
   m_poor->SetToolTip(_("A leg relying in places on charts less detailed than this gets a "
                        "warning: poorly charted."));
   g->Add(m_poor, 1, wxEXPAND);
+  lbl(_("Sparse data: depth bands wider than (m)"));
+  m_sparse = new wxSpinCtrlDouble(sb, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
+                                  wxSP_ARROW_KEYS, 5.0, 1000.0, s.rcSparseBandM, 5.0);
+  m_sparse->SetDigits(0);
+  m_sparse->SetToolTip(_("A depth area this broad (e.g. 0 to 200 m on a small-scale chart) only "
+                         "says the depth is somewhere in that band. Where it is the only depth "
+                         "charted, its minimum is reported as sparse data (a warning, dashed "
+                         "line), not as a shoal."));
+  g->Add(m_sparse, 0);
+  g->AddSpacer(0);
+  g->AddSpacer(0);
   box->Add(g, 0, wxEXPAND | wxALL, B);
   m_safety = new wxStaticText(sb, wxID_ANY, wxEmptyString);
   box->Add(m_safety, 0, wxLEFT | wxRIGHT | wxBOTTOM, B);
@@ -120,7 +131,7 @@ RouteCheckDialog::RouteCheckDialog(wxWindow *parent, cm93depth_pi *plugin)
   top->Add(box, 0, wxEXPAND | wxLEFT | wxRIGHT, B);
   for (wxWindow *w : std::initializer_list<wxWindow *>{m_undep, m_show, m_keep, m_onActivate, m_alarm})
     w->Bind(wxEVT_CHECKBOX, &RouteCheckDialog::onSettingChanged, this);
-  for (wxSpinCtrlDouble *w : {m_halfW, m_wpR, m_tide})
+  for (wxSpinCtrlDouble *w : {m_halfW, m_wpR, m_tide, m_sparse})
     w->Bind(wxEVT_SPINCTRLDOUBLE, [this](wxSpinDoubleEvent &) {
       wxCommandEvent e;
       onSettingChanged(e);
@@ -160,8 +171,10 @@ RouteCheckDialog::RouteCheckDialog(wxWindow *parent, cm93depth_pi *plugin)
                             wxSize(-1, 90), wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
   top->Add(m_detail, 0, wxEXPAND | wxALL, B);
   top->Add(new wxStaticText(this, wxID_ANY,
-                            _("Charted depths only. A pass means no charted problem was found, "
-                              "not that the route is safe.")),
+                            _("FAIL: a charted hazard (red ring). WARNING: sparse, poor or no "
+                              "charting - no hazard identified (dashed line).\nCharted depths "
+                              "only. A pass means no charted problem was found, not that the "
+                              "route is safe.")),
            0, wxLEFT | wxRIGHT, B);
 
   auto *btns = new wxBoxSizer(wxHORIZONTAL);
@@ -222,6 +235,7 @@ PluginSettings RouteCheckDialog::readSettings() const {
   s.rcHalfWidthNm = m_halfW->GetValue();
   s.rcWaypointRadiusNm = m_wpR->GetValue();
   s.rcTideM = m_tide->GetValue();
+  s.rcSparseBandM = m_sparse->GetValue();
   int ps = m_poor->GetSelection();
   if (ps >= 0 && ps < cm93::kNumSlots) s.rcPoorBand = cm93::kSlots[ps].ch;
   s.rcUndepthedFails = m_undep->GetValue();
@@ -305,8 +319,11 @@ void RouteCheckDialog::showResult() {
         U(l.bands), l.status, l.issues, l.index, -1);
   for (const auto &w : r.waypoints)
     add(wxString::Format(_("Waypoint %s"), U(w.name)), wxEmptyString,
-        w.onLand ? wxString(_("land"))
-                 : w.haveDepth ? wxString::Format(_T("%.1f m"), w.depth) : wxString(_T("-")),
+        w.onLand      ? wxString(_("land"))
+        : !w.haveDepth ? wxString(_T("-"))
+        : w.depthBroad ? (std::isfinite(w.depth2) ? wxString::Format(_T("%g-%g m"), w.depth, w.depth2)
+                                                  : wxString::Format(_T("%g+ m"), w.depth))
+                       : wxString::Format(_T("%.1f m"), w.depth),
         wxEmptyString, w.status, w.issues, -1, w.index);
   Layout();
 }

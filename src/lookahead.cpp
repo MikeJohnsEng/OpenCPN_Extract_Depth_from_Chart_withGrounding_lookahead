@@ -448,11 +448,12 @@ LookAheadResult DepthEngine::lookAhead(double lat, double lon, double cogDeg,
           }
 
           // Value of the object
-          double depth = kNaN;
+          double depth = kNaN, depth2 = kNaN;
           bool undep = false;
           if (isArea) {
             double d2;
             if (!area_depth_band(f, depth, d2)) continue;  // e.g. a sand patch in deep water
+            depth2 = d2;
           } else if (isHaz) {
             DangerKind k = danger_depth(f, depth);
             if (k == DangerKind::NotDanger) continue;  // foul ground, fish haven
@@ -519,6 +520,7 @@ LookAheadResult DepthEngine::lookAhead(double lat, double lon, double cogDeg,
             addHit(kNaN, false, true, best, bu, bv);
           } else {
             addHit(depth, false, false, best, bu, bv);
+            hits.back().depth2 = depth2;
           }
         }
       }

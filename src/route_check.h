@@ -41,6 +41,11 @@ struct RouteCheckConfig {
   // charted; a leg relying on a less detailed band gets a warning.
   int poorBandSlot = 5;        // CM93 C (1:200,000)
   double chunkNm = 5.0;        // leg pieces searched at a time
+  // A depth area whose band is wider than this (DRVAL2 - DRVAL1, m), or
+  // has no upper limit, says little about the depth anywhere inside it
+  // (e.g. "0 to 200 m" on a small-scale chart): its minimum below the
+  // safety depth is reported as sparse data (a warning), not as a shoal.
+  double sparseBandM = 30.0;
 };
 
 enum class CheckStatus : int { Pass = 0, Warn = 1, Fail = 2 };
@@ -51,7 +56,12 @@ enum class IssueKind : int {
   Undepthed = 2,  // rock / wreck / obstruction with no depth, or a gap
   PoorChart = 3,  // only charts less detailed than the limit
   NoChart = 4,    // no chart at all
+  SparseData = 5, // only a broad depth band (e.g. 0-200 m) charts the depth
 };
+struct RouteIssue;
+// Charted hazards (shoal, land, undepthed danger or gap) as opposed to
+// warnings about the charting itself (sparse data, poor or no chart)
+bool issue_is_hazard(const RouteIssue &i);
 
 struct RouteIssue {
   IssueKind kind = IssueKind::Shoal;
@@ -59,7 +69,8 @@ struct RouteIssue {
   int waypoint = -1;     // waypoint index for a waypoint circle
   double alongNm = 0;    // from the start of the leg
   LatLon pos{0, 0};
-  double depth = 0;      // charted, m (shoals)
+  double depth = 0;      // charted, m (shoals); DRVAL1 for sparse data
+  double depth2 = 0;     // sparse data: the band's DRVAL2 (NaN = none)
   std::string cls;       // S-57 class, "LNDARE", "HOLE"
   char band = ' ';       // chart band it comes from
   std::string text;      // one line for the report
@@ -78,6 +89,9 @@ struct LegCheck {
   std::string bands;       // bands used, e.g. "G E C"
   CheckStatus status = CheckStatus::Pass;
   std::vector<RouteIssue> issues;
+  // a warning only about the charting (sparse data, poorly or not
+  // charted), no charted hazard: drawn differently
+  bool dataWarningOnly() const;
 };
 
 struct WaypointCheck {
@@ -86,6 +100,8 @@ struct WaypointCheck {
   LatLon pos{0, 0};
   bool haveDepth = false;  // depth area minimum at the waypoint
   double depth = 0;
+  double depth2 = 0;        // ... and its upper limit (NaN = none)
+  bool depthBroad = false;  // a band wider than sparseBandM: sparse data
   std::string depthCls;
   bool onLand = false;
   CheckStatus status = CheckStatus::Pass;

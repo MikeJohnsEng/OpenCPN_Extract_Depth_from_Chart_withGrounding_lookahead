@@ -34,7 +34,7 @@
 
 #define PLUGIN_VERSION_MAJOR 1
 #define PLUGIN_VERSION_MINOR 6
-#define PLUGIN_VERSION_PATCH 2
+#define PLUGIN_VERSION_PATCH 3
 
 class DepthPanel;
 class AlarmDialog;
@@ -111,6 +111,7 @@ struct PluginSettings {
   double rcTideM;         // height of tide added to charted depths
   char rcPoorBand;        // least detailed band taken as properly charted
   bool rcUndepthedFails;  // undepthed dangers / gaps fail (else warn)
+  double rcSparseBandM;   // depth areas with a wider band are sparse data
   bool rcShowOnChart;     // draw the checked route and its findings
   bool rcKeepOnClose;     // keep the drawing when the window is closed
   bool rcOnActivate;      // check a route automatically when activated

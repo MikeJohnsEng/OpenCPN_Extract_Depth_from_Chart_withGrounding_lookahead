@@ -49,6 +49,18 @@ LatLon rhumb_destination(const LatLon &a, double courseDeg, double distNm) {
   return {p2 / kDeg, lon};
 }
 
+bool issue_is_hazard(const RouteIssue &i) {
+  return i.kind == IssueKind::Shoal || i.kind == IssueKind::Land ||
+         i.kind == IssueKind::Undepthed;
+}
+
+bool LegCheck::dataWarningOnly() const {
+  if (status != CheckStatus::Warn) return false;
+  for (const RouteIssue &i : issues)
+    if (issue_is_hazard(i)) return false;
+  return true;
+}
+
 const char *check_status_name(CheckStatus s) {
   switch (s) {
     case CheckStatus::Pass: return "PASS";
@@ -164,7 +176,11 @@ void add_hits(const LookAheadResult &la, double offsetNm, int leg, int wp,
   std::sort(hs.begin(), hs.end(),
             [](const LookHit &a, const LookHit &b) { return a.aheadNm < b.aheadNm; });
   for (const LookHit &h : hs) {
-    if (!h.land && !h.undepthed && std::isfinite(h.depth)) {
+    // a depth area whose band is too broad to say where the shallow part
+    // is (e.g. 0-200 m): not a charted depth for the least depth or a shoal
+    const bool broad = !h.land && !h.undepthed && h.cls == "DEPARE" &&
+                       (!std::isfinite(h.depth2) || h.depth2 - h.depth > rc.sparseBandM);
+    if (!h.land && !h.undepthed && std::isfinite(h.depth) && !broad) {
       if (!haveLeast || h.depth < least) {
         haveLeast = true;
         least = h.depth;
@@ -175,23 +191,29 @@ void add_hits(const LookAheadResult &la, double offsetNm, int leg, int wp,
     RouteIssue is;
     if (h.land) is.kind = IssueKind::Land;
     else if (h.undepthed) is.kind = IssueKind::Undepthed;
-    else if (std::isfinite(h.depth) && h.depth + rc.tideM < rc.safetyDepthM) is.kind = IssueKind::Shoal;
+    else if (std::isfinite(h.depth) && h.depth + rc.tideM < rc.safetyDepthM)
+      is.kind = broad ? IssueKind::SparseData : IssueKind::Shoal;
     else continue;
     is.leg = leg;
     is.waypoint = wp;
     is.alongNm = offsetNm + h.aheadNm;
     is.pos = h.pos;
     is.depth = h.depth;
+    is.depth2 = h.depth2;
     is.cls = h.cls;
     is.band = h.scaleChar;
-    // same kind within 0.1 nm of the previous one: one issue (the shallower)
+    // same kind within 0.1 nm of the previous one: one issue (the shallower);
+    // sparse data: one note per stretch of the same broad band
+    const double mergeNm = is.kind == IssueKind::SparseData ? 1e9 : 0.1;
     RouteIssue *prev = nullptr;
     for (auto it = out.rbegin(); it != out.rend(); ++it)
       if (it->kind == is.kind && it->leg == leg && it->waypoint == wp) {
         prev = &*it;
         break;
       }
-    if (prev && std::fabs(prev->alongNm - is.alongNm) < 0.1) {
+    if (prev && std::fabs(prev->alongNm - is.alongNm) < mergeNm &&
+        (is.kind != IssueKind::SparseData ||
+         (prev->band == is.band && prev->depth == is.depth))) {
       if (is.kind == IssueKind::Shoal && is.depth < prev->depth) {
         prev->depth = is.depth;
         prev->pos = is.pos;
@@ -208,7 +230,8 @@ CheckStatus status_of(const std::vector<RouteIssue> &issues, const RouteCheckCon
   CheckStatus s = CheckStatus::Pass;
   for (const RouteIssue &i : issues) {
     CheckStatus k = CheckStatus::Warn;
-    if (i.kind == IssueKind::Shoal || i.kind == IssueKind::Land || i.kind == IssueKind::NoChart ||
+    // only charted hazards fail; sparse, poor or missing charting warns
+    if (i.kind == IssueKind::Shoal || i.kind == IssueKind::Land ||
         (i.kind == IssueKind::Undepthed && rc.undepthedFails))
       k = CheckStatus::Fail;
     s = std::max(s, k);
@@ -242,6 +265,18 @@ void describe(RouteIssue &i, const RouteCheckConfig &rc) {
                     i.cls == "HOLE" ? "Gap in the depth areas" : class_word(i.cls), i.band,
                     at.c_str(), where.c_str());
       break;
+    case IssueKind::SparseData: {
+      char hi[24];
+      if (std::isfinite(i.depth2)) std::snprintf(hi, sizeof hi, "%g", i.depth2);
+      else std::snprintf(hi, sizeof hi, "deeper");
+      std::string from = i.waypoint >= 0 ? std::string("Sparse data round the waypoint")
+                                         : "Sparse data from " + at;
+      std::snprintf(b, sizeof b,
+                    "%s: only a %g to %s m depth area (band %c) charts the depth; its minimum "
+                    "is not an identified shoal. Pilot with care.",
+                    from.c_str(), i.depth, hi, i.band);
+      break;
+    }
     case IssueKind::PoorChart:
     case IssueKind::NoChart:
       return;  // set where they are made
@@ -278,6 +313,9 @@ void RouteChecker::runTask(DepthEngine &engine, const Task &t) {
       w.haveDepth = true;
       w.depth = d.leastDepth;
       w.depthCls = d.leastClass;
+      w.depth2 = d.haveAtPos ? d.atPosMax : kNaN;
+      w.depthBroad = d.haveAtPos && d.leastDepth == d.atPosMin && w.depthCls == "DEPARE" &&
+                     (!std::isfinite(d.atPosMax) || d.atPosMax - d.atPosMin > rc.sparseBandM);
     }
     if (rc.waypointRadiusNm > 0.005) {
       // the circle as two half-discs (sectors of +-90 deg) north and south
@@ -317,7 +355,7 @@ void RouteChecker::runTask(DepthEngine &engine, const Task &t) {
     is.alongNm = t.offsetNm;
     is.pos = t.a;
     char b[200];
-    std::snprintf(b, sizeof b, "NO CHART from %.2f to %.2f nm along the leg (%s)", t.offsetNm,
+    std::snprintf(b, sizeof b, "No chart from %.2f to %.2f nm along the leg (%s): depths unknown", t.offsetNm,
                   t.offsetNm + t.lengthNm, la.status.c_str());
     is.text = b;
     l.issues.push_back(is);
@@ -335,7 +373,7 @@ void RouteChecker::runTask(DepthEngine &engine, const Task &t) {
     is.alongNm = t.offsetNm + n.first;
     is.pos = rhumb_destination(m_res.waypoints[t.index].pos, l.courseDeg, is.alongNm);
     char b[160];
-    std::snprintf(b, sizeof b, "NO CHART from %.2f to %.2f nm along the leg", is.alongNm,
+    std::snprintf(b, sizeof b, "No chart from %.2f to %.2f nm along the leg: depths unknown", is.alongNm,
                   t.offsetNm + n.second);
     is.text = b;
     l.issues.push_back(is);
@@ -419,7 +457,10 @@ std::string route_check_report(const RouteCheckResult &r) {
   out += b;
   out += "RESULT: " + r.status + "\n";
   out += "Charted depths only (below chart datum, plus the tide entered). A pass means no "
-         "charted problem was found, not that the route is safe.\n\n";
+         "charted problem was found, not that the route is safe.\n";
+  out += "FAIL = a charted hazard (shoal, land, danger with no charted depth, gap). WARNING "
+         "= sparse data, poorly or not charted (no hazard identified), or dangers set to "
+         "warn only.\n\n";
   for (const LegCheck &l : r.legs) {
     std::string least = "-";
     if (l.haveLeast) {
@@ -435,9 +476,14 @@ std::string route_check_report(const RouteCheckResult &r) {
   }
   out += "\n";
   for (const WaypointCheck &w : r.waypoints) {
-    std::string d = w.onLand ? std::string("on land")
-                    : w.haveDepth ? (std::snprintf(b, sizeof b, "%.1f m", w.depth), std::string(b))
-                                  : std::string("-");
+    std::string d = "-";
+    if (w.onLand) d = "on land";
+    else if (w.haveDepth && w.depthBroad && std::isfinite(w.depth2))
+      d = (std::snprintf(b, sizeof b, "%g to %g m area (sparse data)", w.depth, w.depth2), b);
+    else if (w.haveDepth && w.depthBroad)
+      d = (std::snprintf(b, sizeof b, "%g m or more (sparse data)", w.depth), b);
+    else if (w.haveDepth)
+      d = (std::snprintf(b, sizeof b, "%.1f m", w.depth), b);
     std::snprintf(b, sizeof b, "Waypoint %s  %s  depth here %s  %s\n", w.name.c_str(),
                   fmt_pos(w.pos).c_str(), d.c_str(), check_status_name(w.status));
     out += b;

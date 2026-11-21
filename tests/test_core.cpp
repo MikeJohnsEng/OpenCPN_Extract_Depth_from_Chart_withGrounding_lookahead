@@ -911,8 +911,53 @@ static void test_enc(const fs::path &cm93root, double shipLat, double shipLon, d
     rc.poorBandSlot = slot_from_char('C');
     // 6. a long leg running off the chart: in pieces, and "no chart" past its edge
     r = run({{la - 0.04, lo - 0.04, "A"}, {la - 0.04, lo + 0.30, "FAR"}}, rc);
+    //    (no chart: depths unknown, a warning - no hazard identified)
     CHECK(r.legs[0].lengthNm > 14 && has(r.legs[0].issues, IssueKind::NoChart) &&
-          r.overall == CheckStatus::Fail);
+          r.overall == CheckStatus::Warn && r.legs[0].dataWarningOnly());
+    // 7. sparse data: only a broad 0-200 m depth area (an overview chart)
+    {
+      fs::path d2 = fs::temp_directory_path() / "cm93depth_test_sparse";
+      fs::remove_all(d2);
+      fs::create_directories(d2);
+      const double sla = la + 1.0;
+      s57w::Cell ov;
+      ov.dsnm = "ZZ1OVER1.000";
+      ov.intu = 1;
+      ov.cscl = 3000000;
+      ov.area(O_M_COVR, {{T_CATCOV, "1"}}, {s57w::Cell::rect(sla - 0.3, lo - 0.3, sla + 0.3, lo + 0.3)});
+      ov.area(O_DEPARE, {{T_DRVAL1, "0"}, {T_DRVAL2, "200"}},
+              {s57w::Cell::rect(sla - 0.3, lo - 0.3, sla + 0.3, lo + 0.3)});
+      write_bytes(d2 / "ZZ1OVER1.000", ov.build());
+      DepthEngine e2;
+      e2.encIndex().configure({d2.u8string()}, "");
+      e2.encIndex().runToCompletion();
+      RouteCheckConfig sc = rc;
+      sc.poorBandSlot = 0;  // poor-chart warnings aside
+      RouteChecker ck2;
+      ck2.start({{sla - 0.1, lo - 0.1, "S1"}, {sla + 0.1, lo + 0.1, "S2"}}, "sparse", sc,
+                EngineConfig());
+      ck2.runToCompletion(e2);
+      const RouteCheckResult &sr = ck2.result();
+      CHECK(sr.overall == CheckStatus::Warn && has(sr.legs[0].issues, IssueKind::SparseData));
+      CHECK(!has(sr.legs[0].issues, IssueKind::Shoal) && !sr.legs[0].haveLeast);
+      CHECK(sr.legs[0].dataWarningOnly() && sr.waypoints[0].status != CheckStatus::Fail);
+      int nSparse = 0;
+      for (auto &i : sr.legs[0].issues) nSparse += i.kind == IssueKind::SparseData;
+      CHECK(nSparse == 1);  // one note for the stretch, not one per object
+      std::cout << route_check_report(sr);
+      CHECK(sr.waypoints[0].haveDepth && sr.waypoints[0].depthBroad &&
+            std::fabs(sr.waypoints[0].depth2 - 200.0) < 1e-9);
+      // a broader limit: the 0-200 m area counts as a shoal again
+      sc.sparseBandM = 500;
+      ck2.start({{sla - 0.1, lo - 0.1, "S1"}, {sla + 0.1, lo + 0.1, "S2"}}, "sparse", sc,
+                EngineConfig());
+      ck2.runToCompletion(e2);
+      CHECK(ck2.result().overall == CheckStatus::Fail &&
+            has(ck2.result().legs[0].issues, IssueKind::Shoal));
+      // a real shallow band (the harbour's 3-6 m area) stays a shoal at 30 m
+      CHECK(issue_is_hazard(RouteIssue{}) && !r.legs.empty());
+      fs::remove_all(d2);
+    }
     // one waypoint is not a route
     RouteChecker ck;
     ck.start({{la, lo, "X"}}, "one", rc, EngineConfig());

@@ -346,6 +346,18 @@ static const char DEF_RC_POOR_BAND = 'C';
 // Default true. false = they only give a warning.
 static const bool DEF_RC_UNDEPTHED_FAILS = true;
 
+// Sparse data. A depth area whose band is wider than this, m (DRVAL2 -
+// DRVAL1), or has no upper limit - typically "0 to 200 m" on a small-scale
+// chart - says only that the depth is somewhere in that band. Where such an
+// area is the only depth charted and its minimum is below the safety depth,
+// the check reports SPARSE DATA (a warning, the leg drawn as a dashed amber
+// line, no ring) instead of a shoal (a failure with a red ring). Charted
+// soundings, dangers, contours and narrower depth areas are still shoals.
+// Default 30. Raising it treats broader bands as real shoals (more
+// failures where charting is sparse); lowering it treats more bands as
+// sparse data. Range 5 .. 1000.
+static const double DEF_RC_SPARSE_BAND_M = 30.0;
+
 // Draw the checked route on the chart: legs green (pass), amber (warning),
 // red (fail), with a ring on every finding. Default true.
 static const bool DEF_RC_SHOW_ON_CHART = true;
@@ -485,6 +497,7 @@ cm93depth_pi::cm93depth_pi(void *ppimgr)
   m_s.rcTideM = DEF_RC_TIDE_M;
   m_s.rcPoorBand = DEF_RC_POOR_BAND;
   m_s.rcUndepthedFails = DEF_RC_UNDEPTHED_FAILS;
+  m_s.rcSparseBandM = DEF_RC_SPARSE_BAND_M;
   m_s.rcShowOnChart = DEF_RC_SHOW_ON_CHART;
   m_s.rcKeepOnClose = DEF_RC_KEEP_ON_CLOSE;
   m_s.rcOnActivate = DEF_RC_ON_ACTIVATE;
@@ -1178,6 +1191,7 @@ cm93::RouteCheckConfig cm93depth_pi::routeCheckConfig() const {
   c.tideM = m_s.rcTideM;
   c.safetyDepthM = m_s.laSafetyDepthM;
   c.undepthedFails = m_s.rcUndepthedFails;
+  c.sparseBandM = m_s.rcSparseBandM;
   int ps = cm93::slot_from_char(m_s.rcPoorBand);
   c.poorBandSlot = ps >= 0 ? ps : cm93::slot_from_char('C');
   return c;
@@ -1346,6 +1360,7 @@ void cm93depth_pi::applyRouteCheckSettings(const PluginSettings &s) {
   m_s.rcTideM = s.rcTideM;
   m_s.rcPoorBand = s.rcPoorBand;
   m_s.rcUndepthedFails = s.rcUndepthedFails;
+  m_s.rcSparseBandM = s.rcSparseBandM;
   if (s.rcShowOnChart && !m_s.rcShowOnChart && m_rcShown.valid) m_rcDrawn = true;
   m_s.rcShowOnChart = s.rcShowOnChart;
   m_s.rcKeepOnClose = s.rcKeepOnClose;
@@ -1391,7 +1406,9 @@ wxColour status_colour(cm93::CheckStatus s, PI_ColorScheme cs) {
     default: return rc_colour(220, 0, 0, cs);
   }
 }
-bool issue_marked(const cm93::RouteIssue &i) { return i.kind != cm93::IssueKind::PoorChart; }
+// rings only on charted hazards; sparse, poor or missing charting is told by
+// the leg's dashed line and the findings text
+bool issue_marked(const cm93::RouteIssue &i) { return cm93::issue_is_hazard(i); }
 wxColour issue_colour(const cm93::RouteIssue &i, PI_ColorScheme cs) {
   return i.kind == cm93::IssueKind::Undepthed ? rc_colour(235, 120, 0, cs)
                                               : rc_colour(255, 0, 0, cs);
@@ -1405,7 +1422,8 @@ void cm93depth_pi::drawRouteDC(wxDC &dc, PlugIn_ViewPort *vp) {
     wxPoint p, q;
     GetCanvasPixLL(vp, &p, a.lat, a.lon);
     GetCanvasPixLL(vp, &q, b.lat, b.lon);
-    dc.SetPen(wxPen(status_colour(l.status, m_colorScheme), 5));
+    dc.SetPen(wxPen(status_colour(l.status, m_colorScheme), 5,
+                    l.dataWarningOnly() ? wxPENSTYLE_SHORT_DASH : wxPENSTYLE_SOLID));
     dc.DrawLine(p, q);
   }
   dc.SetBrush(*wxTRANSPARENT_BRUSH);
@@ -1441,10 +1459,15 @@ void cm93depth_pi::drawRouteGL(PlugIn_ViewPort *vp) {
     GetCanvasPixLL(vp, &q, b.lat, b.lon);
     wxColour c = status_colour(l.status, m_colorScheme);
     glColor4ub(c.Red(), c.Green(), c.Blue(), 170);
+    if (l.dataWarningOnly()) {
+      glEnable(GL_LINE_STIPPLE);
+      glLineStipple(3, 0xF0F0);  // dashed: sparse / poor charting only
+    }
     glBegin(GL_LINES);
     glVertex2i(p.x, p.y);
     glVertex2i(q.x, q.y);
     glEnd();
+    glDisable(GL_LINE_STIPPLE);
   }
   glLineWidth(3.0f);
   auto ring = [&](const cm93::RouteIssue &i) {
@@ -1682,6 +1705,8 @@ void cm93depth_pi::loadConfig() {
     if (!b.IsEmpty() && cm93::slot_from_char((char)b[0]) >= 0) m_s.rcPoorBand = (char)b[0];
   }
   c->Read(_T("RcUndepthedFails"), &m_s.rcUndepthedFails, m_s.rcUndepthedFails);
+  c->Read(_T("RcSparseBandM"), &m_s.rcSparseBandM, m_s.rcSparseBandM);
+  m_s.rcSparseBandM = std::clamp(m_s.rcSparseBandM, 5.0, 1000.0);
   c->Read(_T("RcShowOnChart"), &m_s.rcShowOnChart, m_s.rcShowOnChart);
   c->Read(_T("RcKeepOnClose"), &m_s.rcKeepOnClose, m_s.rcKeepOnClose);
   c->Read(_T("RcOnActivate"), &m_s.rcOnActivate, m_s.rcOnActivate);
@@ -1783,6 +1808,7 @@ void cm93depth_pi::saveConfig() {
   c->Write(_T("RcTideM"), m_s.rcTideM);
   c->Write(_T("RcPoorBand"), wxString(m_s.rcPoorBand));
   c->Write(_T("RcUndepthedFails"), m_s.rcUndepthedFails);
+  c->Write(_T("RcSparseBandM"), m_s.rcSparseBandM);
   c->Write(_T("RcShowOnChart"), m_s.rcShowOnChart);
   c->Write(_T("RcKeepOnClose"), m_s.rcKeepOnClose);
   c->Write(_T("RcOnActivate"), m_s.rcOnActivate);
