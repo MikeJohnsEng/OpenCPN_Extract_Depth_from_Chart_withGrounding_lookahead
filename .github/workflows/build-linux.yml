@@ -8,9 +8,10 @@
 #  - Runs by itself when a release is published, and attaches the tarballs
 #    to that release.
 #  - Can be run by hand: Actions tab > "Build Linux and Raspberry Pi
-#    plugins" > Run workflow. Give a release tag to attach the tarballs to
-#    that release, or leave it empty to only keep them as downloads
-#    ("artifacts") on the run's page for 90 days.
+#    plugins" > Run workflow. It builds the branch chosen there (main).
+#    Give a release tag to attach the tarballs to that release, or leave
+#    it empty to only keep them as downloads ("artifacts") on the run's
+#    page for 90 days.
 #  - Anyone can fork the repository and run it in their fork.
 #
 # One tarball per target: it installs (OpenCPN > Options > Plugins >
@@ -33,7 +34,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and attach to (empty = build main, no release)"
+        description: "Release tag to attach the packages to (empty = none)"
         required: false
         default: ""
 
@@ -41,7 +42,9 @@ permissions:
   contents: write  # to attach the tarballs to a release
 
 env:
-  REF: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag || github.ref }}
+  # a published release builds its own tag; a run by hand builds the branch
+  # it was started on
+  REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
 
 jobs:
   tests:
