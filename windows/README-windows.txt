@@ -5,14 +5,15 @@ Two separate jobs:
 
   BUILD    once per OpenCPN type, on a PC with Visual Studio.
            Result: a plugin tarball, e.g.
-             windows\dist\cm93depth_pi-1.6.3-0_msvc-wx32-10-x86.tar.gz
+             windows\dist\cm93depth_pi-1.6.3-0_msvc-windows_wx32-10-x86.tar.gz
   INSTALL  on any PC with that OpenCPN type, from inside OpenCPN:
              Options > Plugins > Import plugin...
            No compiler, script or admin rights needed.
 
 A plugin DLL must match the OpenCPN it runs in: 32- or 64-bit, and the
 wxWidgets version (3.2 for current OpenCPN). The tarball name shows which:
-"msvc-wx32 ... x86" = 32-bit OpenCPN, "msvc-64 ... x86_64" = 64-bit.
+"msvc-windows_wx32 ... x86" = 32-bit OpenCPN, "msvc-windows_64 ... x86_64" =
+64-bit (releases up to 1.6.2 had no "windows_" in the name).
 OpenCPN refuses a tarball of the wrong type ("Incompatible import plugin").
 It loads in OpenCPN 5.8 and later of the same type; rebuild if a new
 OpenCPN release changes 32/64-bit or the wxWidgets version.

@@ -32,7 +32,8 @@ Ready-built plugin packages are on the **Releases** page (right-hand side of the
 
 | File name contains | For |
 |---|---|
-| `msvc-wx32 … x86` | Windows, 32-bit OpenCPN (built by hand) |
+| `msvc-windows_wx32 … x86` | Windows, 32-bit OpenCPN (built by hand; `msvc-wx32 … x86` up to 1.6.2) |
+| `msvc-windows_64 … x86_64` | Windows, 64-bit OpenCPN, if provided |
 | `ubuntu-24.04-x86_64` | Ubuntu 24.04, Linux Mint 22 |
 | `ubuntu-22.04-x86_64` | Ubuntu 22.04, Linux Mint 21 |
 | `debian-13-x86_64` | Debian 13 PCs |

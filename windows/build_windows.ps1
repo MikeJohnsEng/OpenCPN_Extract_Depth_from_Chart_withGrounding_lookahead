@@ -276,7 +276,12 @@ $meta = @"
                         (New-Object Text.UTF8Encoding $false))
 $tarExe = Join-Path $env:SystemRoot "System32\tar.exe"
 if (-not (Test-Path $tarExe)) { Fail "tar.exe not found (it comes with Windows 10 1803 and later)." }
-$Tarball = Join-Path $Dist "$TopName.tar.gz"
+# The file name says "windows" so it is told apart from the Linux packages on
+# a release page: ..._msvc-windows_wx32-10-x86.tar.gz (32-bit),
+# ..._msvc-windows_64-10-x86_64.tar.gz (64-bit). Only the file name: the
+# folder and metadata inside keep OpenCPN's target name.
+$FileName = $TopName -replace "_msvc-", "_msvc-windows_"
+$Tarball = Join-Path $Dist "$FileName.tar.gz"
 if (Test-Path $Tarball) { Remove-Item $Tarball -Force }
 # files only (-n: no directory entries), forward slashes as OpenCPN expects
 & $tarExe -czf $Tarball -C $Stage -n "$TopName/metadata.xml" "$TopName/plugins/cm93depth_pi.dll"
